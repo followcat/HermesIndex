@@ -19,7 +19,7 @@ HermesIndex
 
 快速开始（开发）
 ---------------
-1) 安装依赖（建议 Python 3.10+，虚拟环境）：
+1) 安装依赖（建议 Python 3.11+，虚拟环境）：
 ```
 pip install -r requirements.txt
 ```
