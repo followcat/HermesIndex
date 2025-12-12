@@ -10,3 +10,4 @@ numpy>=1.24
 sentence-transformers>=2.2.2
 qdrant-client>=1.9
 pymilvus>=2.3
+celery>=5.3

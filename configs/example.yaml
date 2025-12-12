@@ -41,6 +41,12 @@ sync:
   batch_size: 256
   concurrency: 2
 
+# Celery 调度（可选）
+# celery:
+#   broker_url: "redis://localhost:6379/0"
+#   backend_url: "redis://localhost:6379/1"
+#   schedule_seconds: 600  # 定时全量增量同步周期
+
 sources:
   - name: "torrents"
     pg:

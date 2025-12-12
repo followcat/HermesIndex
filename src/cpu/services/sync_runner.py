@@ -8,7 +8,7 @@ from cpu.clients.gpu_client import GPUClient
 from cpu.config import load_config, source_batch_size
 from cpu.core.utils import text_hash
 from cpu.repositories.pg import PGClient
-from cpu.repositories.vector_store import create_vector_store
+from cpu.repositories.vector_store import BaseVectorStore, create_vector_store
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 def sync_source(
     source: Dict[str, Any],
-    vector_store,
+    vector_store: BaseVectorStore,
     pg_client: PGClient,
     gpu_client: GPUClient,
     embedding_version: str,
@@ -75,17 +75,17 @@ def sync_source(
         )
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="HermesIndex sync runner")
-    parser.add_argument("--config", default="configs/example.yaml")
-    args = parser.parse_args()
-
-    cfg = load_config(args.config)
+def run_sync(config_path: str, target_source: str | None = None) -> None:
+    cfg = load_config(config_path)
     pg_client = PGClient(cfg.postgres["dsn"])
     pg_client.ensure_tables()
     vector_store = create_vector_store(cfg.vector_store)
     gpu_client = GPUClient(cfg.gpu_endpoint)
-    for source in cfg.sources:
+    sources = [s for s in cfg.sources if (not target_source or s["name"] == target_source)]
+    if not sources:
+        logger.warning("No sources matched for sync (target=%s)", target_source)
+        return
+    for source in sources:
         batch_size = source_batch_size(source, cfg.sync)
         sync_source(
             source,
@@ -96,6 +96,15 @@ def main() -> None:
             cfg.nsfw_threshold,
             batch_size,
         )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="HermesIndex sync runner")
+    parser.add_argument("--config", default="configs/example.yaml")
+    parser.add_argument("--source", help="only sync specified source name")
+    args = parser.parse_args()
+
+    run_sync(args.config, args.source)
 
 
 if __name__ == "__main__":

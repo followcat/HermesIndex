@@ -14,6 +14,7 @@ class Config:
     sync: Dict[str, Any]
     sources: List[Dict[str, Any]]
     local_embedder: Dict[str, Any] = field(default_factory=dict)
+    celery: Dict[str, Any] = field(default_factory=dict)
 
 
 def load_config(path: str) -> Config:
@@ -28,6 +29,7 @@ def load_config(path: str) -> Config:
         sync=raw.get("sync", {}),
         sources=raw.get("sources", []),
         local_embedder=raw.get("local_embedder", {}),
+        celery=raw.get("celery", {}),
     )
 
 

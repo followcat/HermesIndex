@@ -40,13 +40,26 @@ PYTHONPATH=src uvicorn gpu_service.main:app --host 0.0.0.0 --port 8001
 - 支持批量输入，默认最大长度截断，可通过环境变量配置。
 
 运行同步任务（CPU 节点）
------------------------
 ```
 PYTHONPATH=src python -m cpu.services.sync_runner --config configs/example.yaml
 ```
 - 读取 PG，检测未同步/变更的记录。
 - 批量调用 GPU 推理，写入向量索引与 `sync_state`。
 - 幂等：重复执行只更新变更记录。
+
+使用 Celery 调度增量同步（可选）
+-----------------------------
+```
+CONFIG_PATH=configs/example.yaml \
+PYTHONPATH=src \
+celery -A cpu.services.celery_app worker --loglevel=INFO --concurrency=1
+
+CONFIG_PATH=configs/example.yaml \
+PYTHONPATH=src \
+celery -A cpu.services.celery_app beat --loglevel=INFO
+```
+- `celery.schedule_seconds`（配置项）> 0 时自动启用定时全量增量同步。
+- 对本地 HNSW 索引建议 worker `--concurrency=1` 避免并发写冲突；服务化向量库可并发更高。
 
 启动搜索 API（CPU 节点）
 ----------------------
