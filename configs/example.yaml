@@ -1,0 +1,54 @@
+# Global settings
+gpu_endpoint: "http://localhost:8001"
+embedding_model_version: "bge-small-zh-v1.5"
+nsfw_threshold: 0.7
+local_embedder:
+  enabled: false
+  model_name: "BAAI/bge-small-zh-v1.5"
+
+postgres:
+  dsn: "postgresql://user:password@localhost:5432/hermes"
+  fetch_batch_size: 500
+
+vector_store:
+  type: "hnsw"
+  path: "./data/index"
+  max_elements: 1500000
+  dim: 768
+  metric: "cosine"
+  ef_construction: 200
+  M: 16
+
+sync:
+  batch_size: 256
+  concurrency: 2
+
+sources:
+  - name: "torrents"
+    pg:
+      table: "torrents"
+      id_field: "id"
+      text_field: "title"
+      updated_at_field: "updated_at"   # optional
+      extra_fields: ["category", "size"]
+    vector_index:
+      index_name: "torrents_title_v1"
+      dim: 768
+      metric: "cosine"
+    tagging:
+      nsfw: true
+    sync:
+      mode: "incremental"
+      batch_size: 256
+      concurrency: 2
+  - name: "files"
+    pg:
+      table: "files"
+      id_field: "id"
+      text_field: "name"
+    vector_index:
+      index_name: "files_name_v1"
+      dim: 768
+      metric: "cosine"
+    tagging:
+      nsfw: false
