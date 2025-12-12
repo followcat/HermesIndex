@@ -7,7 +7,20 @@ import hnswlib
 import numpy as np
 
 
-class HNSWVectorStore:
+class BaseVectorStore:
+    dim: int
+
+    def add(self, embeddings: np.ndarray, metas: List[Dict[str, Any]]) -> List[Any]:
+        raise NotImplementedError
+
+    def query(self, embedding: np.ndarray, topk: int = 20) -> List[Dict[str, Any]]:
+        raise NotImplementedError
+
+    def size(self) -> int:
+        raise NotImplementedError
+
+
+class HNSWVectorStore(BaseVectorStore):
     def __init__(
         self,
         path: str,
@@ -114,3 +127,154 @@ class HNSWVectorStore:
 
     def size(self) -> int:
         return len(self.meta)
+
+
+class QdrantVectorStore(BaseVectorStore):
+    def __init__(
+        self,
+        url: str,
+        collection: str,
+        dim: int,
+        metric: str = "cosine",
+        api_key: str | None = None,
+    ) -> None:
+        try:
+            from qdrant_client import QdrantClient
+            from qdrant_client.http.models import Distance, VectorParams
+        except Exception as exc:  # pragma: no cover - optional dep
+            raise ImportError("qdrant-client is required for Qdrant vector store") from exc
+        self.dim = dim
+        self.collection = collection
+        self.metric = metric
+        distance = Distance.COSINE if metric == "cosine" else Distance.DOT
+        self.client = QdrantClient(url=url, api_key=api_key, timeout=60)
+        if collection not in [c.name for c in self.client.get_collections().collections]:
+            self.client.recreate_collection(
+                collection_name=collection,
+                vectors_config=VectorParams(size=dim, distance=distance),
+            )
+
+    def add(self, embeddings: np.ndarray, metas: List[Dict[str, Any]]) -> List[str]:
+        from qdrant_client.http.models import PointStruct
+
+        points: List[PointStruct] = []
+        for idx, (emb, meta) in enumerate(zip(embeddings, metas)):
+            point_id = f"{meta['source']}:{meta['pg_id']}"
+            points.append(PointStruct(id=point_id, vector=emb.tolist(), payload=meta))
+        self.client.upsert(collection_name=self.collection, points=points, wait=True)
+        return [str(p.id) for p in points]
+
+    def query(self, embedding: np.ndarray, topk: int = 20) -> List[Dict[str, Any]]:
+        hits = self.client.search(
+            collection_name=self.collection,
+            query_vector=embedding[0].tolist(),
+            limit=topk,
+        )
+        results: List[Dict[str, Any]] = []
+        for hit in hits:
+            payload = hit.payload or {}
+            payload["score"] = float(hit.score)
+            results.append(payload)
+        return results
+
+    def size(self) -> int:
+        info = self.client.get_collection(collection_name=self.collection)
+        return int(info.points_count or 0)
+
+
+class MilvusVectorStore(BaseVectorStore):
+    def __init__(
+        self,
+        uri: str,
+        collection: str,
+        dim: int,
+        metric: str = "cosine",
+    ) -> None:
+        try:
+            from pymilvus import (
+                Collection,
+                CollectionSchema,
+                DataType,
+                FieldSchema,
+                connections,
+                utility,
+            )
+        except Exception as exc:  # pragma: no cover - optional dep
+            raise ImportError("pymilvus is required for Milvus vector store") from exc
+
+        connections.connect(alias="default", uri=uri)
+        self.collection_name = collection
+        self.metric = metric
+        self.dim = dim
+        self._schema = (
+            FieldSchema(name="id", dtype=DataType.VARCHAR, is_primary=True, max_length=128),
+            FieldSchema(name="vector", dtype=DataType.FLOAT_VECTOR, dim=dim),
+            FieldSchema(name="payload", dtype=DataType.JSON),
+        )
+        if not utility.has_collection(self.collection_name):
+            schema = CollectionSchema(fields=list(self._schema), description="HermesIndex vectors")
+            self.collection = Collection(name=self.collection_name, schema=schema)
+            self.collection.create_index(
+                field_name="vector",
+                index_params={"index_type": "HNSW", "metric_type": "IP" if metric == "dot" else "COSINE", "params": {}},
+            )
+        else:
+            self.collection = Collection(self.collection_name)
+
+    def add(self, embeddings: np.ndarray, metas: List[Dict[str, Any]]) -> List[str]:
+        ids = [f"{m['source']}:{m['pg_id']}" for m in metas]
+        payloads = metas
+        self.collection.insert([ids, embeddings.tolist(), payloads])
+        self.collection.flush()
+        return ids
+
+    def query(self, embedding: np.ndarray, topk: int = 20) -> List[Dict[str, Any]]:
+        expr = ""
+        search_params = {"metric_type": "IP" if self.metric == "dot" else "COSINE"}
+        res = self.collection.search(
+            data=embedding.tolist(),
+            anns_field="vector",
+            param=search_params,
+            limit=topk,
+            expr=expr,
+            output_fields=["payload"],
+        )
+        results: List[Dict[str, Any]] = []
+        for hit in res[0]:
+            payload = dict(hit.entity.get("payload") or {})
+            payload["score"] = float(hit.score)
+            results.append(payload)
+        return results
+
+    def size(self) -> int:
+        return int(self.collection.num_entities)
+
+
+def create_vector_store(cfg: Dict[str, Any]) -> BaseVectorStore:
+    store_type = cfg.get("type", "hnsw").lower()
+    if store_type == "hnsw":
+        return HNSWVectorStore(
+            path=cfg.get("path", "./data/index"),
+            dim=int(cfg.get("dim", 768)),
+            max_elements=int(cfg.get("max_elements", 1_500_000)),
+            metric=cfg.get("metric", "cosine"),
+            ef_construction=int(cfg.get("ef_construction", 200)),
+            m=int(cfg.get("M", 16)),
+            ef_search=int(cfg.get("ef_search", 64)),
+        )
+    if store_type == "qdrant":
+        return QdrantVectorStore(
+            url=cfg["url"],
+            collection=cfg.get("collection", "hermes_vectors"),
+            dim=int(cfg.get("dim", 768)),
+            metric=cfg.get("metric", "cosine"),
+            api_key=cfg.get("api_key"),
+        )
+    if store_type == "milvus":
+        return MilvusVectorStore(
+            uri=cfg["uri"],
+            collection=cfg.get("collection", "hermes_vectors"),
+            dim=int(cfg.get("dim", 768)),
+            metric=cfg.get("metric", "cosine"),
+        )
+    raise ValueError(f"Unsupported vector_store.type={store_type}")

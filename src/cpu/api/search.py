@@ -9,21 +9,13 @@ from cpu.config import load_config
 from cpu.core.embedder import LocalEmbedder
 from cpu.clients.gpu_client import GPUClient
 from cpu.repositories.pg import PGClient
-from cpu.repositories.vector_store import HNSWVectorStore
+from cpu.repositories.vector_store import create_vector_store
 
 CONFIG_PATH = os.getenv("CONFIG_PATH", "configs/example.yaml")
 
 cfg = load_config(CONFIG_PATH)
 pg_client = PGClient(cfg.postgres["dsn"])
-vector_store = HNSWVectorStore(
-    path=cfg.vector_store.get("path", "./data/index"),
-    dim=int(cfg.vector_store.get("dim", 768)),
-    max_elements=int(cfg.vector_store.get("max_elements", 1_500_000)),
-    metric=cfg.vector_store.get("metric", "cosine"),
-    ef_construction=int(cfg.vector_store.get("ef_construction", 200)),
-    m=int(cfg.vector_store.get("M", 16)),
-    ef_search=int(cfg.vector_store.get("ef_search", 64)),
-)
+vector_store = create_vector_store(cfg.vector_store)
 gpu_client = GPUClient(cfg.gpu_endpoint) if cfg.gpu_endpoint else None
 local_embedder = None
 if cfg.local_embedder.get("enabled"):

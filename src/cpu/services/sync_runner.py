@@ -8,7 +8,7 @@ from cpu.clients.gpu_client import GPUClient
 from cpu.config import load_config, source_batch_size
 from cpu.core.utils import text_hash
 from cpu.repositories.pg import PGClient
-from cpu.repositories.vector_store import HNSWVectorStore
+from cpu.repositories.vector_store import create_vector_store
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 def sync_source(
     source: Dict[str, Any],
-    vector_store: HNSWVectorStore,
+    vector_store,
     pg_client: PGClient,
     gpu_client: GPUClient,
     embedding_version: str,
@@ -83,16 +83,7 @@ def main() -> None:
     cfg = load_config(args.config)
     pg_client = PGClient(cfg.postgres["dsn"])
     pg_client.ensure_tables()
-    store_cfg = cfg.vector_store
-    vector_store = HNSWVectorStore(
-        path=store_cfg.get("path", "./data/index"),
-        dim=int(store_cfg.get("dim", 768)),
-        max_elements=int(store_cfg.get("max_elements", 1_500_000)),
-        metric=store_cfg.get("metric", "cosine"),
-        ef_construction=int(store_cfg.get("ef_construction", 200)),
-        m=int(store_cfg.get("M", 16)),
-        ef_search=int(store_cfg.get("ef_search", 64)),
-    )
+    vector_store = create_vector_store(cfg.vector_store)
     gpu_client = GPUClient(cfg.gpu_endpoint)
     for source in cfg.sources:
         batch_size = source_batch_size(source, cfg.sync)

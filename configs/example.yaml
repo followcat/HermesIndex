@@ -18,6 +18,24 @@ vector_store:
   metric: "cosine"
   ef_construction: 200
   M: 16
+  ef_search: 64
+
+# Qdrant 示例（启用时替换上方配置）：
+# vector_store:
+#   type: "qdrant"
+#   url: "http://localhost:6333"
+#   collection: "hermes_vectors"
+#   dim: 768
+#   metric: "cosine"
+#   api_key: ""
+
+# Milvus 示例：
+# vector_store:
+#   type: "milvus"
+#   uri: "http://localhost:19530"
+#   collection: "hermes_vectors"
+#   dim: 768
+#   metric: "cosine"
 
 sync:
   batch_size: 256

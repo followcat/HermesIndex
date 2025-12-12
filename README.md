@@ -24,7 +24,10 @@ HermesIndex
 pip install -r requirements.txt
 ```
 2) 准备 PostgreSQL：执行 `sql/sync_state.sql`。
-3) 填写 `configs/example.yaml`，指定 PG 连接、数据源表与向量索引存储路径。
+3) 填写 `configs/example.yaml`，指定 PG 连接、数据源表与向量索引存储路径：
+   - 本地索引：`vector_store.type=hnsw`（默认）。
+   - Qdrant：`vector_store.type=qdrant`，配置 `url`/`collection`（需安装 `qdrant-client`）。
+   - Milvus：`vector_store.type=milvus`，配置 `uri`/`collection`（需安装 `pymilvus`）。
 
 启动 GPU 推理服务
 ----------------
@@ -57,7 +60,7 @@ PYTHONPATH=src uvicorn cpu.api.search:app --host 0.0.0.0 --port 8000 --reload
 -----------
 - 分离 GPU/CPU：GPU 仅做推理；CPU 负责存储、索引与在线查询。
 - 配置驱动：sources 中指定 PG 表/字段、索引参数、同步批大小与并发。
-- 向量索引：默认 HNSW（hnswlib），支持持久化；元数据存本地 JSONL，并在 `sync_state` 中记录 hash 与版本。
+- 向量索引：默认本地 HNSW（hnswlib），支持持久化；元数据存本地 JSONL，并在 `sync_state` 中记录 hash 与版本。可切换 Qdrant/Milvus 作为服务化向量库（配置 `vector_store.type`）。
 - 增量同步：依据文本哈希或 `updated_at` 字段；支持重试与断点续跑。
 - NSFW 过滤：推理返回 `nsfw_score`，CPU 端按阈值标记并在搜索时过滤。
 
