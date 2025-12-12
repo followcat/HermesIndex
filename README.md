@@ -23,6 +23,7 @@ HermesIndex
 ```
 pip install -r requirements.txt
 ```
+> `requirements.txt` 包含可选依赖（Qdrant、Milvus、Celery）。如只用本地 HNSW，可在安装时移除对应包以减轻体积。
 2) 准备 PostgreSQL：执行 `sql/sync_state.sql`。
 3) 填写 `configs/example.yaml`，指定 PG 连接、数据源表与向量索引存储路径：
    - 本地索引：`vector_store.type=hnsw`（默认）。
@@ -40,12 +41,14 @@ PYTHONPATH=src uvicorn gpu_service.main:app --host 0.0.0.0 --port 8001
 - 支持批量输入，默认最大长度截断，可通过环境变量配置。
 
 运行同步任务（CPU 节点）
+------------------------
 ```
 PYTHONPATH=src python -m cpu.services.sync_runner --config configs/example.yaml
 ```
 - 读取 PG，检测未同步/变更的记录。
 - 批量调用 GPU 推理，写入向量索引与 `sync_state`。
 - 幂等：重复执行只更新变更记录。
+- 指定单个 source 同步：`--source torrents`
 
 使用 Celery 调度增量同步（可选）
 -----------------------------
@@ -82,9 +85,11 @@ PYTHONPATH=src uvicorn cpu.api.search:app --host 0.0.0.0 --port 8000 --reload
 - 模型下载：`MODEL_NAME` 可指向已本地缓存的模型；无模型时会回退到轻量随机嵌入（仅用于联调）。
 - 向量维度：与所选模型一致，需与配置 `dim` 保持一致；变更模型需重建索引。
 - 数据量：首版面向百万级；HNSW 参数可在 `config` 中调整。
+- Celery + 本地 HNSW：因索引文件写入非并发安全，使用单 worker 或外部向量库（Qdrant/Milvus）以提升并发。
+- 可选依赖：仅本地 HNSW 时可跳过 `qdrant-client`/`pymilvus`；不使用 Celery 可跳过 `celery`。
 
 后续可拓展
 ---------
-- 支持 Qdrant/Milvus 等服务化向量库。
-- 增量任务调度器（celery/apscheduler）。
-- 更丰富的标签与多模型版本共存。
+- 增量同步的分布式锁/去重（多 worker 或多实例）。
+- 查询层缓存与热点结果缓存。
+- 更丰富的标签、多模型版本共存与灰度迁移。
