@@ -1,10 +1,10 @@
 # Global settings
 gpu_endpoint: "http://localhost:8001"
-embedding_model_version: "bge-small-zh-v1.5"
+embedding_model_version: "bge-m3"
 nsfw_threshold: 0.7
 local_embedder:
   enabled: false
-  model_name: "BAAI/bge-small-zh-v1.5"
+  model_name: "BAAI/bge-m3"
 
 postgres:
   dsn: "postgresql://user:password@localhost:5432/hermes"

@@ -22,7 +22,7 @@ def load_config(path: str) -> Config:
         raw = yaml.safe_load(f) or {}
     return Config(
         gpu_endpoint=raw.get("gpu_endpoint", "http://localhost:8001"),
-        embedding_model_version=raw.get("embedding_model_version", "bge-small-zh-v1.5"),
+        embedding_model_version=raw.get("embedding_model_version", "bge-m3"),
         nsfw_threshold=float(raw.get("nsfw_threshold", 0.7)),
         postgres=raw.get("postgres", {}),
         vector_store=raw.get("vector_store", {}),

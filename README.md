@@ -29,11 +29,14 @@ pip install -r requirements.txt
    - 本地索引：`vector_store.type=hnsw`（默认）。
    - Qdrant：`vector_store.type=qdrant`，配置 `url`/`collection`（需安装 `qdrant-client`）。
    - Milvus：`vector_store.type=milvus`，配置 `uri`/`collection`（需安装 `pymilvus`）。
+   - 模型默认 `BAAI/bge-m3`（多语），如需更轻可改回 `bge-small-zh-v1.5` 并同步调整 `dim`。
 
 启动 GPU 推理服务
 ----------------
 ```
-export MODEL_NAME=BAAI/bge-small-zh-v1.5  # 可选，或使用默认 mini 模型
+export MODEL_NAME=BAAI/bge-m3  # 多语模型；如需轻量可改回 bge-small-zh-v1.5
+export MAX_TOKEN_LENGTH=256
+export BATCH_SIZE=16
 PYTHONPATH=src uvicorn gpu_service.main:app --host 0.0.0.0 --port 8001
 ```
 - `POST /infer`：同时返回 embedding 与 NSFW 分数。

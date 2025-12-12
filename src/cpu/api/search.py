@@ -19,7 +19,7 @@ vector_store = create_vector_store(cfg.vector_store)
 gpu_client = GPUClient(cfg.gpu_endpoint) if cfg.gpu_endpoint else None
 local_embedder = None
 if cfg.local_embedder.get("enabled"):
-    local_embedder = LocalEmbedder(cfg.local_embedder.get("model_name", "BAAI/bge-small-zh-v1.5"))
+    local_embedder = LocalEmbedder(cfg.local_embedder.get("model_name", "BAAI/bge-m3"))
 
 source_map: Dict[str, Dict[str, Any]] = {s["name"]: s for s in cfg.sources}
 
