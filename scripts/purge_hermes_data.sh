@@ -2,6 +2,7 @@
 set -euo pipefail
 
 CONFIG_PATH=${CONFIG_PATH:-configs/bitmagnet.yaml}
+PURGE_MODE=${PURGE_MODE:-truncate}
 
 if [[ ! -f "$CONFIG_PATH" ]]; then
   echo "Config not found: $CONFIG_PATH" >&2
@@ -46,6 +47,11 @@ if [[ -z "$HERMES_DSN" ]]; then
   exit 1
 fi
 
+if [[ "$HERMES_SCHEMA" == "public" ]]; then
+  echo "Refusing to purge schema 'public'." >&2
+  exit 1
+fi
+
 VECTOR_TYPE_LOWER=$(echo "$VECTOR_TYPE" | tr '[:upper:]' '[:lower:]')
 
 cleanup_note=""
@@ -57,7 +63,13 @@ else
   cleanup_note="Vector store: $VECTOR_TYPE (manual cleanup may be needed)"
 fi
 
-echo "WARNING: This will DROP schema '$HERMES_SCHEMA' and delete vector data."
+if [[ "$PURGE_MODE" == "drop" ]]; then
+  warning_action="DROP schema '$HERMES_SCHEMA'"
+else
+  warning_action="TRUNCATE tables and DROP views in schema '$HERMES_SCHEMA'"
+fi
+
+echo "WARNING: This will $warning_action and delete vector data."
 echo "Config: $CONFIG_PATH"
 echo "Database: $HERMES_DSN"
 echo "$cleanup_note"
@@ -72,8 +84,47 @@ if [[ "$second" != "$HERMES_SCHEMA" ]]; then
   exit 1
 fi
 
-psql "$HERMES_DSN" -v ON_ERROR_STOP=1 -c "DROP SCHEMA IF EXISTS \"$HERMES_SCHEMA\" CASCADE;"
-psql "$HERMES_DSN" -v ON_ERROR_STOP=1 -c "CREATE SCHEMA IF NOT EXISTS \"$HERMES_SCHEMA\";"
+python3 - <<'PY' "$HERMES_DSN" "$HERMES_SCHEMA" "$PURGE_MODE"
+import sys
+
+try:
+    import psycopg
+except Exception as exc:  # pragma: no cover
+    raise SystemExit(f"psycopg is required to purge schema: {exc}")
+
+dsn = sys.argv[1]
+schema = sys.argv[2]
+mode = sys.argv[3]
+
+with psycopg.connect(dsn, autocommit=True) as conn:
+    with conn.cursor() as cur:
+        if mode == "drop":
+            cur.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE;')
+            cur.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema}";')
+        else:
+            cur.execute(
+                """
+                SELECT table_name
+                FROM information_schema.tables
+                WHERE table_schema = %s AND table_type = 'BASE TABLE'
+                """,
+                (schema,),
+            )
+            tables = [row[0] for row in cur.fetchall()]
+            for table in tables:
+                cur.execute(f'TRUNCATE TABLE "{schema}"."{table}" CASCADE;')
+            cur.execute(
+                """
+                SELECT table_name
+                FROM information_schema.views
+                WHERE table_schema = %s
+                """,
+                (schema,),
+            )
+            views = [row[0] for row in cur.fetchall()]
+            for view in views:
+                cur.execute(f'DROP VIEW IF EXISTS "{schema}"."{view}" CASCADE;')
+PY
 
 if [[ "$VECTOR_TYPE_LOWER" == "hnsw" ]]; then
   if [[ -n "$VECTOR_PATH" ]]; then
