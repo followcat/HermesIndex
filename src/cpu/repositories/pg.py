@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS sync_state (
     pg_id TEXT NOT NULL,
     text_hash TEXT,
     embedding_version TEXT,
-    vector_id BIGINT,
+    vector_id TEXT,
     nsfw_score REAL,
     updated_at TIMESTAMPTZ DEFAULT now(),
     last_error TEXT,
@@ -50,9 +50,13 @@ class PGClient:
         for field in extra_fields:
             columns.append(f"t.{field} AS {field}")
 
-        conditions = ["s.pg_id IS NULL", f"s.text_hash IS DISTINCT FROM md5(t.{text_field})"]
         if updated_at_field:
-            conditions.append(f"t.{updated_at_field} > COALESCE(s.updated_at, to_timestamp(0))")
+            conditions = [
+                "s.pg_id IS NULL",
+                f"t.{updated_at_field} > COALESCE(s.updated_at, to_timestamp(0))",
+            ]
+        else:
+            conditions = ["s.pg_id IS NULL", f"s.text_hash IS DISTINCT FROM md5(t.{text_field})"]
         where = " OR ".join(f"({c})" for c in conditions)
         order_field = updated_at_field or id_field
 
@@ -81,7 +85,7 @@ class PGClient:
                 r["pg_id"],
                 r.get("text_hash"),
                 r.get("embedding_version"),
-                int(r.get("vector_id")),
+                str(r.get("vector_id")),
                 float(r.get("nsfw_score", 0.0)),
             )
             for r in rows

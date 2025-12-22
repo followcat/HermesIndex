@@ -48,6 +48,13 @@ TMDB 自动扩展（可选）
 --------------------
 `tmdb.auto_enrich=true` 时，同步 `bitmagnet_content` 会自动拉取 TMDB 信息（演员/导演/别名/关键词/剧情/类型）并写入 `hermes.tmdb_enrichment`。
 
+bitmagnet 索引建议
+-----------------
+同步性能优先依赖 `updated_at` 索引，建议执行：
+```
+psql "$BITMAGNET_DSN" -f sql/bitmagnet_indexes.sql
+```
+
 运行脚本（scripts/）
 -------------------
 - `scripts/run_gpu_multi.sh`：单进程多卡 GPU 服务（默认 `GPU_DEVICES=0,1,2,3`）
