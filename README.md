@@ -14,7 +14,6 @@ HermesIndex
   - `core/`：基础能力（本地 embedder、工具）。
   - `repositories/`：PG 与向量库适配器。
   - `services/`：同步任务与作业入口。
-- `AIthink/magnet/`：bitmagnet 接入说明与工具。
 - `sql/sync_state.sql`：同步状态表 schema。
 - `requirements.txt`：依赖清单。
 
