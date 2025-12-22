@@ -1,0 +1,83 @@
+# Example HermesIndex config for bitmagnet.
+# Replace placeholders with real table/columns.
+
+gpu_endpoint: "http://localhost:8001"
+embedding_model_version: "bge-m3"
+nsfw_threshold: 0.7
+local_embedder:
+  enabled: false
+  model_name: "BAAI/bge-m3"
+
+postgres:
+  # If you created a writable schema (e.g. hermes), set search_path so
+  # sync_state is created there:
+  # dsn: "postgresql://followcat:REPLACE_PASSWORD@127.0.0.1:5432/bitmagnet?options=-csearch_path=hermes,public"
+  dsn: "postgresql://followcat:REPLACE_PASSWORD@127.0.0.1:5432/bitmagnet"
+  fetch_batch_size: 500
+
+# Bitmagnet plugin (auto-create views for content/torrent_files)
+bitmagnet:
+  enabled: true
+  host: "127.0.0.1"
+  port: 5432
+  database: "bitmagnet"
+  user: "followcat"
+  password: "REPLACE_PASSWORD"
+  schema: "hermes"
+
+vector_store:
+  type: "hnsw"
+  path: "./data/bitmagnet_index"
+  max_elements: 1500000
+  dim: 768
+  metric: "cosine"
+  ef_construction: 200
+  M: 16
+  ef_search: 64
+
+sync:
+  batch_size: 256
+  concurrency: 2
+
+sources:
+  - name: "bitmagnet_torrents"
+    pg:
+      table: "REPLACE_TABLE"
+      id_field: "REPLACE_ID_FIELD"
+      text_field: "REPLACE_TEXT_FIELD"
+      # updated_at_field: "updated_at"
+      # extra_fields: ["size", "private", "files_count", "extension"]
+      # Optional joins for tags/hints. Non-agg join fields assume 1:1.
+      # joins:
+      #   - table: "torrent_tags"
+      #     alias: "tt"
+      #     type: "left"
+      #     on: "tt.info_hash = t.info_hash"
+      #     fields:
+      #       - column: "name"
+      #         alias: "tags"
+      #         agg: "array_agg"
+      #         distinct: true
+      #   - table: "torrent_hints"
+      #     alias: "th"
+      #     type: "left"
+      #     on: "th.info_hash = t.info_hash"
+      #     fields:
+      #       - column: "title"
+      #         alias: "hint_title"
+      #       - column: "release_year"
+      #         alias: "release_year"
+      #       - column: "video_resolution"
+      #         alias: "video_resolution"
+      #       - column: "video_codec"
+      #         alias: "video_codec"
+    vector_index:
+      index_name: "bitmagnet_title_v1"
+      dim: 768
+      metric: "cosine"
+    tagging:
+      nsfw: true
+    sync:
+      mode: "incremental"
+      batch_size: 256
+      concurrency: 2
