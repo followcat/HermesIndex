@@ -10,6 +10,7 @@ data/
 
 # Local configs
 configs/*.local.yaml
+configs/bitmagnet.yaml
 
 # Documentation (source requirements already tracked elsewhere)
 docs/
