@@ -16,6 +16,7 @@ class Config:
     local_embedder: Dict[str, Any] = field(default_factory=dict)
     celery: Dict[str, Any] = field(default_factory=dict)
     bitmagnet: Dict[str, Any] = field(default_factory=dict)
+    tmdb: Dict[str, Any] = field(default_factory=dict)
 
 
 def load_config(path: str) -> Config:
@@ -32,6 +33,7 @@ def load_config(path: str) -> Config:
         local_embedder=raw.get("local_embedder", {}),
         celery=raw.get("celery", {}),
         bitmagnet=raw.get("bitmagnet", {}),
+        tmdb=raw.get("tmdb", {}),
     )
 
 

@@ -9,6 +9,7 @@ from cpu.config import load_config, source_batch_size
 from cpu.core.utils import text_hash
 from cpu.repositories.pg import PGClient
 from cpu.repositories.vector_store import BaseVectorStore, create_vector_store
+from cpu.services.tmdb_enrich import ensure_tmdb_enrichment
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -22,6 +23,8 @@ def sync_source(
     embedding_version: str,
     nsfw_threshold: float,
     batch_size: int,
+    tmdb_cfg: Dict[str, Any],
+    tmdb_schema: str,
 ) -> None:
     logger.info("Sync start for source=%s", source["name"])
     while True:
@@ -29,6 +32,35 @@ def sync_source(
         if not rows:
             logger.info("No pending rows for source=%s", source["name"])
             break
+        if source.get("pg", {}).get("tmdb_enrich"):
+            tmdb_refs = [
+                (r.get("type"), r.get("tmdb_id")) for r in rows if r.get("tmdb_id") and r.get("type")
+            ]
+            if tmdb_refs and tmdb_cfg.get("enabled") and tmdb_cfg.get("auto_enrich"):
+                with pg_client.connect() as conn:
+                    ensure_tmdb_enrichment(conn, tmdb_schema, tmdb_refs, tmdb_cfg)
+                ids = [str(r["pg_id"]) for r in rows]
+                refreshed = pg_client.fetch_by_ids(source, ids)
+                updated_rows: List[Dict[str, Any]] = []
+                updated_at_field = source.get("pg", {}).get("updated_at_field")
+                extra_fields = source.get("pg", {}).get("extra_fields", [])
+                for pg_id in ids:
+                    pg_row = refreshed.get(pg_id)
+                    if not pg_row:
+                        continue
+                    text = pg_row.get(source["pg"]["text_field"], "")
+                    new_row = {
+                        "pg_id": pg_id,
+                        "text": text,
+                        "text_hash": text_hash(text),
+                    }
+                    if updated_at_field and updated_at_field in pg_row:
+                        new_row["updated_at"] = pg_row.get(updated_at_field)
+                    for field in extra_fields:
+                        if field in pg_row:
+                            new_row[field] = pg_row.get(field)
+                    updated_rows.append(new_row)
+                rows = updated_rows
         texts = [r["text"] for r in rows]
         try:
             embeddings, scores = gpu_client.infer(texts)
@@ -81,6 +113,7 @@ def run_sync(config_path: str, target_source: str | None = None) -> None:
     pg_client.ensure_tables()
     vector_store = create_vector_store(cfg.vector_store)
     gpu_client = GPUClient(cfg.gpu_endpoint)
+    tmdb_schema = (cfg.bitmagnet or {}).get("schema", "hermes")
     sources = [s for s in cfg.sources if (not target_source or s["name"] == target_source)]
     if not sources:
         logger.warning("No sources matched for sync (target=%s)", target_source)
@@ -95,6 +128,8 @@ def run_sync(config_path: str, target_source: str | None = None) -> None:
             cfg.embedding_model_version,
             cfg.nsfw_threshold,
             batch_size,
+            cfg.tmdb,
+            tmdb_schema,
         )
 
 

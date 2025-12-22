@@ -35,7 +35,7 @@ Bitmagnet 数据库可用数据总结
 - 推荐 view：
   - `content_uid = type || ':' || source || ':' || id`
   - 视图：`hermes.content_view`
-- 文本字段：`title`（可扩展到 `original_title`/`overview`）
+- 文本字段：`search_text`（由 `title`/`original_title`/`overview`/`release_year`/genre/tmdb_id 拼接）
 - 增量字段：`updated_at`
 - 推荐 extra_fields：`type`, `source`, `id`, `original_title`, `overview`, `adult`, `release_year`
 - 适用：内容级语义检索（电影/剧集等）
@@ -58,7 +58,7 @@ Bitmagnet 数据库可用数据总结
 - 表：`public.content_attributes`
 - 字段：`content_type`, `content_source`, `content_id`, `key`, `value`
 - 建议：聚合为 key/value 数组（或只取感兴趣 key）
-- 用途：附加属性（如 imdb id、poster_path）
+- 用途：附加属性（如 tmdb id、poster_path）
 
 4) content_collections / content_collections_content
 - 表：`public.content_collections`, `public.content_collections_content`

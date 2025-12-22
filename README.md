@@ -39,6 +39,15 @@ PYTHONPATH=src python -m cpu.services.bitmagnet_setup --config configs/example.y
 ```
 示例配置已使用 `127.0.0.1` 占位，按需替换为实际地址或 DSN。
 
+自动创建的 view（bitmagnet）
+---------------------------
+- `hermes.torrent_files_view`：为 `torrent_files` 生成唯一 `file_id`
+- `hermes.content_view`：为 `content` 生成唯一 `content_uid`，并聚合 `search_text` 以便语义检索
+
+TMDB 自动扩展（可选）
+--------------------
+`tmdb.auto_enrich=true` 时，同步 `bitmagnet_content` 会自动拉取 TMDB 信息（演员/导演/别名/关键词/剧情/类型）并写入 `hermes.tmdb_enrichment`。
+
 启动 GPU 推理服务
 ----------------
 ```

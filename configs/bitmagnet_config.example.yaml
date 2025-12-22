@@ -24,6 +24,17 @@ bitmagnet:
   user: "followcat"
   password: "REPLACE_PASSWORD"
   schema: "hermes"
+  create_schema: true
+
+tmdb:
+  enabled: false
+  api_key_env: "TMDB_API_KEY"
+  base_url: "https://api.themoviedb.org/3"
+  language: "zh-CN"
+  sleep_seconds: 1.0
+  timeout_seconds: 10
+  auto_enrich: false
+  max_per_batch: 50
 
 vector_store:
   type: "hnsw"
@@ -81,3 +92,23 @@ sources:
       mode: "incremental"
       batch_size: 256
       concurrency: 2
+
+  # Optional content source (when using hermes.content_view)
+  # - name: "bitmagnet_content"
+  #   pg:
+  #     table: "hermes.content_view"
+  #     id_field: "content_uid"
+  #     text_field: "search_text"
+  #     updated_at_field: "updated_at"
+  #     extra_fields: ["title", "original_title", "overview", "type", "source", "id", "adult", "release_year", "tmdb_id"]
+  #     tmdb_enrich: true
+  #   vector_index:
+  #     index_name: "content_title_v1"
+  #     dim: 768
+  #     metric: "cosine"
+  #   tagging:
+  #     nsfw: true
+  #   sync:
+  #     mode: "incremental"
+  #     batch_size: 256
+  #     concurrency: 2

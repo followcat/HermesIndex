@@ -25,8 +25,18 @@ def build_dsn(cfg: Dict[str, Any]) -> str:
     return f"postgresql://{user}:{password}@{host}:{port}/{database}"
 
 
-def ensure_schema(conn: psycopg.Connection, schema: str) -> None:
+def ensure_schema(conn: psycopg.Connection, schema: str, create_schema: bool) -> None:
     with conn.cursor() as cur:
+        cur.execute(
+            "SELECT 1 FROM information_schema.schemata WHERE schema_name = %s",
+            (schema,),
+        )
+        exists = cur.fetchone()
+        if exists:
+            logger.info("Schema exists: %s", schema)
+            return
+        if not create_schema:
+            raise ValueError(f"Schema {schema} does not exist and create_schema=false")
         cur.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS {};").format(sql.Identifier(schema)))
 
 
@@ -55,21 +65,87 @@ def create_content_view(conn: psycopg.Connection, schema: str) -> None:
         """
         CREATE OR REPLACE VIEW {schema}.content_view AS
         SELECT
-            (type || ':' || source || ':' || id) AS content_uid,
-            type,
-            source,
-            id,
-            title,
-            original_title,
-            overview,
-            adult,
-            release_year,
-            updated_at
-        FROM public.content
+            (c.type || ':' || c.source || ':' || c.id) AS content_uid,
+            c.type,
+            c.source,
+            c.id,
+            c.title,
+            c.original_title,
+            c.overview,
+            c.adult,
+            c.release_year,
+            c.updated_at,
+            CASE WHEN c.source = 'tmdb' THEN c.id ELSE NULL END AS tmdb_id
+            ,
+            trim(both ' ' from concat_ws(' ',
+                c.title,
+                c.original_title,
+                c.overview,
+                c.release_year::text,
+                string_agg(DISTINCT cc.name, ' ') FILTER (WHERE cc.name IS NOT NULL),
+                CASE WHEN c.source = 'tmdb' THEN c.id ELSE NULL END,
+                te.aka,
+                te.keywords,
+                te.actors,
+                te.directors,
+                te.plot,
+                te.genre
+            )) AS search_text
+        FROM public.content c
+        LEFT JOIN public.content_collections_content ccc
+            ON ccc.content_type = c.type
+            AND ccc.content_source = c.source
+            AND ccc.content_id = c.id
+        LEFT JOIN public.content_collections cc
+            ON cc.type = ccc.content_collection_type
+            AND cc.source = ccc.content_collection_source
+            AND cc.id = ccc.content_collection_id
+        LEFT JOIN {schema}.tmdb_enrichment te
+            ON te.content_type = c.type
+            AND te.tmdb_id = c.id
+            AND c.source = 'tmdb'
+        GROUP BY
+            c.type,
+            c.source,
+            c.id,
+            c.title,
+            c.original_title,
+            c.overview,
+            c.adult,
+            c.release_year,
+            c.updated_at,
+            te.aka,
+            te.keywords,
+            te.actors,
+            te.directors,
+            te.plot,
+            te.genre
         """
     ).format(schema=sql.Identifier(schema))
     with conn.cursor() as cur:
         cur.execute(view_sql)
+
+
+def ensure_tmdb_table(conn: psycopg.Connection, schema: str) -> None:
+    table_sql = sql.SQL(
+        """
+        CREATE TABLE IF NOT EXISTS {schema}.tmdb_enrichment (
+            content_type TEXT NOT NULL,
+            tmdb_id TEXT NOT NULL,
+            aka TEXT,
+            keywords TEXT,
+            actors TEXT,
+            directors TEXT,
+            plot TEXT,
+            genre TEXT,
+            raw JSONB,
+            updated_at TIMESTAMPTZ DEFAULT now(),
+            PRIMARY KEY (content_type, tmdb_id)
+        );
+        """
+    ).format(schema=sql.Identifier(schema))
+    with conn.cursor() as cur:
+        cur.execute(table_sql)
 
 
 def setup_bitmagnet(config_path: str) -> None:
@@ -79,9 +155,11 @@ def setup_bitmagnet(config_path: str) -> None:
         logger.info("bitmagnet plugin disabled in config")
         return
     schema = bm_cfg.get("schema", "hermes")
+    create_schema = bool(bm_cfg.get("create_schema", True))
     dsn = build_dsn(bm_cfg)
     with psycopg.connect(dsn, autocommit=True) as conn:
-        ensure_schema(conn, schema)
+        ensure_schema(conn, schema, create_schema)
+        ensure_tmdb_table(conn, schema)
         create_torrent_files_view(conn, schema)
         create_content_view(conn, schema)
     logger.info("bitmagnet views created in schema=%s", schema)

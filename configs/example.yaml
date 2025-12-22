@@ -19,6 +19,22 @@ bitmagnet:
   user: "followcat"
   password: "REPLACE_PASSWORD"
   schema: "hermes"
+  create_schema: true
+
+# TMDB enrichment (optional, uses API key from env)
+tmdb:
+  enabled: false
+  api_key_env: "TMDB_API_KEY"
+  base_url: "https://api.themoviedb.org/3"
+  language: "zh-CN"
+  sleep_seconds: 1.0
+  timeout_seconds: 10
+  auto_enrich: false
+  max_per_batch: 50
+  # limits:
+  #   actors: 10
+  #   directors: 5
+  #   aka: 10
 
 vector_store:
   type: "hnsw"
