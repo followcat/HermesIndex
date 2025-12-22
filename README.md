@@ -14,6 +14,7 @@ HermesIndex
   - `core/`：基础能力（本地 embedder、工具）。
   - `repositories/`：PG 与向量库适配器。
   - `services/`：同步任务与作业入口。
+- `AIthink/magnet/`：bitmagnet 接入说明与工具。
 - `sql/sync_state.sql`：同步状态表 schema。
 - `requirements.txt`：依赖清单。
 
@@ -30,6 +31,14 @@ pip install -r requirements.txt
    - Qdrant：`vector_store.type=qdrant`，配置 `url`/`collection`（需安装 `qdrant-client`）。
    - Milvus：`vector_store.type=milvus`，配置 `uri`/`collection`（需安装 `pymilvus`）。
    - 模型默认 `BAAI/bge-m3`（多语），如需更轻可改回 `bge-small-zh-v1.5` 并同步调整 `dim`。
+
+bitmagnet 插件（可选）
+--------------------
+如果要对接 bitmagnet 数据库，可在配置中启用 `bitmagnet` 并自动创建必要的 view：
+```
+PYTHONPATH=src python -m cpu.services.bitmagnet_setup --config configs/example.yaml
+```
+示例配置已使用 `127.0.0.1` 占位，按需替换为实际地址或 DSN。
 
 启动 GPU 推理服务
 ----------------

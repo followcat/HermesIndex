@@ -10,6 +10,16 @@ postgres:
   dsn: "postgresql://user:password@localhost:5432/hermes"
   fetch_batch_size: 500
 
+# Bitmagnet plugin (optional)
+bitmagnet:
+  enabled: false
+  host: "127.0.0.1"
+  port: 5432
+  database: "bitmagnet"
+  user: "followcat"
+  password: "REPLACE_PASSWORD"
+  schema: "hermes"
+
 vector_store:
   type: "hnsw"
   path: "./data/index"

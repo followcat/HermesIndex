@@ -1,6 +1,7 @@
 from typing import Any, Dict, Iterable, List, Sequence
 
 import psycopg
+from psycopg import sql
 from psycopg.rows import dict_row
 
 SYNC_TABLE_SQL = """
@@ -118,14 +119,78 @@ class PGClient:
         table = pg_cfg["table"]
         id_field = pg_cfg["id_field"]
         text_field = pg_cfg["text_field"]
+        if not ids:
+            return {}
         fields = [id_field, text_field]
         for f in pg_cfg.get("extra_fields", []):
             fields.append(f)
-        if not ids:
-            return {}
+        joins = pg_cfg.get("joins", [])
         id_list = list(ids)
-        placeholders = ",".join(["%s"] * len(id_list))
-        query = f"SELECT {', '.join(fields)} FROM {table} WHERE {id_field} IN ({placeholders})"
+        placeholders = sql.SQL(", ").join(sql.Placeholder() for _ in id_list)
+        select_cols = [sql.SQL("t.{}").format(sql.Identifier(f)) for f in fields]
+        group_by_cols = [sql.SQL("t.{}").format(sql.Identifier(f)) for f in fields]
+        join_clauses: List[sql.Composable] = []
+        has_agg = False
+
+        for idx, join_cfg in enumerate(joins):
+            join_table = join_cfg["table"]
+            join_alias = join_cfg.get("alias") or f"j{idx}"
+            join_type = str(join_cfg.get("type", "left")).lower()
+            if join_type not in {"left", "inner"}:
+                raise ValueError(f"Unsupported join type: {join_type}")
+            join_fields = join_cfg.get("fields", [])
+            join_clause = sql.SQL("{} JOIN {} AS {} ON {}").format(
+                sql.SQL(join_type.upper()),
+                self._table_identifier(join_table),
+                sql.Identifier(join_alias),
+                sql.SQL(join_cfg["on"]),
+            )
+            join_clauses.append(join_clause)
+            for field_cfg in join_fields:
+                column = field_cfg["column"]
+                alias_name = field_cfg.get("alias") or column
+                agg = field_cfg.get("agg")
+                distinct = bool(field_cfg.get("distinct"))
+                if agg:
+                    agg_name = str(agg).lower()
+                    if agg_name not in {"array_agg", "json_agg", "jsonb_agg"}:
+                        raise ValueError(f"Unsupported aggregate: {agg}")
+                    select_cols.append(
+                        sql.SQL("{agg}({distinct}{col}) AS {alias}").format(
+                            agg=sql.SQL(agg_name),
+                            distinct=sql.SQL("DISTINCT ") if distinct else sql.SQL(""),
+                            col=sql.Identifier(join_alias, column),
+                            alias=sql.Identifier(alias_name),
+                        )
+                    )
+                    has_agg = True
+                else:
+                    select_cols.append(
+                        sql.SQL("{}.{} AS {}").format(
+                            sql.Identifier(join_alias),
+                            sql.Identifier(column),
+                            sql.Identifier(alias_name),
+                        )
+                    )
+                    group_by_cols.append(
+                        sql.SQL("{}.{}").format(
+                            sql.Identifier(join_alias),
+                            sql.Identifier(column),
+                        )
+                    )
+
+        query = sql.SQL("SELECT {selects} FROM {table} AS t {joins} WHERE t.{id_field} IN ({placeholders})").format(
+            selects=sql.SQL(", ").join(select_cols),
+            table=self._table_identifier(table),
+            joins=sql.SQL(" ").join(join_clauses) if join_clauses else sql.SQL(""),
+            id_field=sql.Identifier(id_field),
+            placeholders=placeholders,
+        )
+        if has_agg:
+            query = sql.SQL("{base} GROUP BY {group_by}").format(
+                base=query,
+                group_by=sql.SQL(", ").join(group_by_cols),
+            )
         with self.connect() as conn, conn.cursor() as cur:
             cur.execute(query, id_list)
             rows = cur.fetchall()
@@ -134,3 +199,10 @@ class PGClient:
                 key = str(row[id_field])
                 result[key] = {k: row[k] for k in row}
             return result
+
+    @staticmethod
+    def _table_identifier(table: str) -> sql.Identifier:
+        if "." in table:
+            schema, name = table.rsplit(".", 1)
+            return sql.Identifier(schema, name)
+        return sql.Identifier(table)

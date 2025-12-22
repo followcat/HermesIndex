@@ -13,3 +13,6 @@ configs/*.local.yaml
 
 # Documentation (source requirements already tracked elsewhere)
 docs/
+
+# AI tools workspace
+AIthink/
