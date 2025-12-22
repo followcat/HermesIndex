@@ -48,12 +48,23 @@ TMDB 自动扩展（可选）
 --------------------
 `tmdb.auto_enrich=true` 时，同步 `bitmagnet_content` 会自动拉取 TMDB 信息（演员/导演/别名/关键词/剧情/类型）并写入 `hermes.tmdb_enrichment`。
 
+运行脚本（scripts/）
+-------------------
+- `scripts/run_gpu_multi.sh`：单进程多卡 GPU 服务（默认 `GPU_DEVICES=0,1,2,3`）
+- `scripts/run_gpu_single.sh`：单进程单卡 GPU 服务
+- `scripts/run_cpu_service.sh`：CPU 搜索服务
+- `scripts/run_sync.sh`：同步任务（可用 `SOURCE=...` 指定 source）
+- `scripts/purge_hermes_data.sh`：清空 hermes schema 与向量库（需要二次确认）
+- `scripts/entry.sh`：统一入口（`gpu-multi|gpu-single|cpu|sync|purge`）
+
 启动 GPU 推理服务
 ----------------
 ```
 export MODEL_NAME=BAAI/bge-m3  # 多语模型；如需轻量可改回 bge-small-zh-v1.5
 export MAX_TOKEN_LENGTH=256
 export BATCH_SIZE=16
+export DEVICE=cuda
+export GPU_DEVICES=0,1,2,3  # 单进程多卡推理
 PYTHONPATH=src uvicorn gpu_service.main:app --host 0.0.0.0 --port 8001
 ```
 - `POST /infer`：同时返回 embedding 与 NSFW 分数。
