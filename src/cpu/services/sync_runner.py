@@ -1,5 +1,6 @@
 import argparse
 import logging
+import time
 from typing import Any, Dict, List
 
 import numpy as np
@@ -27,20 +28,41 @@ def sync_source(
     tmdb_schema: str,
 ) -> None:
     logger.info("Sync start for source=%s", source["name"])
+    total_rows = 0
+    total_batches = 0
+    total_time = 0.0
     while True:
+        batch_start = time.perf_counter()
+        fetch_start = time.perf_counter()
         rows = pg_client.fetch_pending(source, batch_size=batch_size)
+        fetch_cost = time.perf_counter() - fetch_start
         if not rows:
             logger.info("No pending rows for source=%s", source["name"])
             break
+        logger.info(
+            "Fetched pending rows=%d for source=%s cost=%.3fs",
+            len(rows),
+            source["name"],
+            fetch_cost,
+        )
         if source.get("pg", {}).get("tmdb_enrich"):
             tmdb_refs = [
                 (r.get("type"), r.get("tmdb_id")) for r in rows if r.get("tmdb_id") and r.get("type")
             ]
             if tmdb_refs and tmdb_cfg.get("enabled") and tmdb_cfg.get("auto_enrich"):
+                logger.info(
+                    "Auto-enrich TMDB refs=%d for source=%s",
+                    len(tmdb_refs),
+                    source["name"],
+                )
+                enrich_start = time.perf_counter()
                 with pg_client.connect() as conn:
                     ensure_tmdb_enrichment(conn, tmdb_schema, tmdb_refs, tmdb_cfg)
+                enrich_cost = time.perf_counter() - enrich_start
                 ids = [str(r["pg_id"]) for r in rows]
+                refresh_start = time.perf_counter()
                 refreshed = pg_client.fetch_by_ids(source, ids)
+                refresh_cost = time.perf_counter() - refresh_start
                 updated_rows: List[Dict[str, Any]] = []
                 updated_at_field = source.get("pg", {}).get("updated_at_field")
                 extra_fields = source.get("pg", {}).get("extra_fields", [])
@@ -61,9 +83,19 @@ def sync_source(
                             new_row[field] = pg_row.get(field)
                     updated_rows.append(new_row)
                 rows = updated_rows
+                logger.info(
+                    "Refreshed rows after TMDB enrich=%d for source=%s enrich_cost=%.3fs refresh_cost=%.3fs",
+                    len(rows),
+                    source["name"],
+                    enrich_cost,
+                    refresh_cost,
+                )
         texts = [r["text"] for r in rows]
+        logger.info("Embedding batch size=%d for source=%s", len(texts), source["name"])
         try:
+            infer_start = time.perf_counter()
             embeddings, scores = gpu_client.infer(texts)
+            infer_cost = time.perf_counter() - infer_start
         except Exception as exc:
             logger.exception("GPU inference failed: %s", exc)
             for r in rows:
@@ -95,15 +127,44 @@ def sync_source(
                     "nsfw_score": float(score),
                 }
             )
+        add_start = time.perf_counter()
         labels = vector_store.add(np.asarray(embeddings, dtype="float32"), metas)
+        add_cost = time.perf_counter() - add_start
         for meta, label, update in zip(metas, labels, updates):
             update["vector_id"] = label
+        upsert_start = time.perf_counter()
         pg_client.upsert_sync_state(source["name"], updates)
+        upsert_cost = time.perf_counter() - upsert_start
         logger.info(
-            "Synced batch size=%d for source=%s, total_index_size=%d",
+            "Synced batch size=%d for source=%s, total_index_size=%d infer_cost=%.3fs add_cost=%.3fs upsert_cost=%.3fs",
             len(rows),
             source["name"],
             vector_store.size(),
+            infer_cost,
+            add_cost,
+            upsert_cost,
+        )
+        batch_cost = time.perf_counter() - batch_start
+        throughput = len(rows) / batch_cost if batch_cost > 0 else 0.0
+        logger.info(
+            "Batch done size=%d source=%s total_cost=%.3fs throughput=%.2f rows/s",
+            len(rows),
+            source["name"],
+            batch_cost,
+            throughput,
+        )
+        total_rows += len(rows)
+        total_batches += 1
+        total_time += batch_cost
+    if total_batches:
+        avg_throughput = total_rows / total_time if total_time > 0 else 0.0
+        logger.info(
+            "Sync summary source=%s batches=%d total_rows=%d total_time=%.3fs avg_throughput=%.2f rows/s",
+            source["name"],
+            total_batches,
+            total_rows,
+            total_time,
+            avg_throughput,
         )
 
 
