@@ -1,5 +1,20 @@
 <template>
-  <div class="page">
+  <div v-if="!isAuthenticated" class="login-page">
+    <div class="login-card">
+      <h1>HermesIndex</h1>
+      <p>请登录以继续</p>
+      <div class="login-form">
+        <input v-model="loginForm.username" type="text" placeholder="用户名" />
+        <input v-model="loginForm.password" type="password" placeholder="密码" />
+        <button class="action-btn primary" @click="doLogin" :disabled="authLoading">
+          {{ authLoading ? "登录中..." : "登录" }}
+        </button>
+        <div v-if="authError" class="login-error">{{ authError }}</div>
+      </div>
+    </div>
+  </div>
+
+  <div v-else class="page">
     <section>
       <div class="hero">
         <h1>HermesIndex</h1>
@@ -231,15 +246,78 @@
         <h2>详情</h2>
         <p class="empty">选择一条结果查看详情与磁力下载。</p>
       </template>
-      <div class="footer">API: {{ apiBase }}</div>
+      <div v-if="isAdmin" class="admin-panel">
+        <h3>用户管理</h3>
+        <div class="admin-actions">
+          <input v-model="newUser.username" type="text" placeholder="用户名" />
+          <input v-model="newUser.password" type="password" placeholder="密码" />
+          <select v-model="newUser.role">
+            <option value="user">用户</option>
+            <option value="admin">管理员</option>
+          </select>
+          <button class="action-btn primary" @click="createUser" :disabled="userLoading">
+            添加
+          </button>
+        </div>
+        <div v-if="userError" class="login-error">{{ userError }}</div>
+        <div class="admin-list">
+          <div v-for="user in users" :key="user.username" class="admin-item">
+            <span>{{ user.username }}</span>
+            <span class="badge">{{ user.role }}</span>
+            <button class="action-btn" @click="deleteUser(user.username)">删除</button>
+          </div>
+        </div>
+      </div>
+      <div class="footer">
+        <span>API: {{ apiBase }}</span>
+        <span v-if="currentUser" class="mono">用户: {{ currentUser.username }} ({{ currentUser.role }})</span>
+        <button class="action-btn" @click="logout">退出</button>
+      </div>
     </aside>
   </div>
+  <footer v-if="isAuthenticated" class="status-footer">
+    <div class="status-title">同步状态</div>
+    <div v-if="statusLoading" class="status-line">加载中...</div>
+    <div v-else-if="!syncStatus" class="status-line">暂无状态</div>
+    <div v-else class="status-lines">
+      <div class="status-line">
+        TMDB 内容: {{ syncStatus.tmdb_content_total }}
+        <span v-if="syncStatus.tmdb_content_latest">（最新 {{ formatDateTime(syncStatus.tmdb_content_latest) }}）</span>
+      </div>
+      <div class="status-line">
+        TMDB Enrichment: {{ syncStatus.tmdb_enrichment_total }}
+        <span v-if="syncStatus.tmdb_enrichment_latest">（最新 {{ formatDateTime(syncStatus.tmdb_enrichment_latest) }}）</span>
+        <span>缺失 aka/keywords: {{ syncStatus.tmdb_enrichment_missing }}</span>
+      </div>
+      <div class="status-grid">
+        <div v-for="source in syncStatus.sources" :key="source.name" class="status-card">
+          <div class="status-card-title">{{ source.name }}</div>
+          <div class="status-card-body">
+            <div>表: {{ source.table }}</div>
+            <div>总量: {{ source.total_rows }}</div>
+            <div>已同步: {{ source.synced_rows }}</div>
+            <div v-if="source.max_updated_at">最新更新时间: {{ formatDateTime(source.max_updated_at) }}</div>
+            <div v-if="source.last_sync_updated_at">上次同步: {{ formatDateTime(source.last_sync_updated_at) }}</div>
+            <div v-if="source.max_synced_updated_at">最新同步数据: {{ formatDateTime(source.max_synced_updated_at) }}</div>
+            <div>错误: {{ source.errors }}</div>
+          </div>
+        </div>
+      </div>
+      <div class="status-line">每 60 秒自动刷新</div>
+    </div>
+  </footer>
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 
 const apiBase = import.meta.env.VITE_API_BASE || "/api";
+const authToken = ref(localStorage.getItem("auth_token") || "");
+const authRequired = ref(true);
+const currentUser = ref(null);
+const authLoading = ref(false);
+const authError = ref("");
+const loginForm = ref({ username: "", password: "" });
 const query = ref("");
 const pageSize = ref(20);
 const cursor = ref(0);
@@ -257,6 +335,13 @@ const latestLoading = ref(false);
 const selectedLatest = ref(null);
 const latestDetail = ref(null);
 const latestDetailLoading = ref(false);
+const syncStatus = ref(null);
+const statusLoading = ref(false);
+let statusTimer = null;
+const users = ref([]);
+const userLoading = ref(false);
+const userError = ref("");
+const newUser = ref({ username: "", password: "", role: "user" });
 
 const emptyMessage = computed(() => {
   if (loading.value) return "搜索中...";
@@ -267,6 +352,8 @@ const emptyMessage = computed(() => {
 const currentPage = computed(() => cursorStack.value.length + 1);
 
 const filteredResults = computed(() => results.value);
+const isAuthenticated = computed(() => !authRequired.value || !!authToken.value);
+const isAdmin = computed(() => currentUser.value?.role === "admin");
 
 const detailSummary = computed(() => {
   if (!selected.value) return "";
@@ -319,6 +406,159 @@ function prettySize(size) {
   return `${current.toFixed(1)} ${units[idx]}`;
 }
 
+async function apiFetch(url, options = {}) {
+  const headers = new Headers(options.headers || {});
+  if (authToken.value) {
+    headers.set("Authorization", `Bearer ${authToken.value}`);
+  }
+  const resp = await fetch(url, { ...options, headers });
+  if (resp.status === 401) {
+    authToken.value = "";
+    localStorage.removeItem("auth_token");
+    authRequired.value = true;
+    currentUser.value = null;
+  }
+  return resp;
+}
+
+async function loadMe() {
+  authLoading.value = true;
+  authError.value = "";
+  try {
+    const resp = await apiFetch(`${apiBase}/auth/me`);
+    if (resp.status === 400) {
+      authRequired.value = false;
+      currentUser.value = { username: "guest", role: "guest" };
+      fetchLatestTmdb();
+      fetchSyncStatus();
+      statusTimer = window.setInterval(fetchSyncStatus, 60000);
+      return;
+    }
+    if (!resp.ok) {
+      authRequired.value = true;
+      currentUser.value = null;
+      return;
+    }
+    const data = await resp.json();
+    currentUser.value = data;
+    if (data?.role === "guest") {
+      authRequired.value = false;
+    } else {
+      authRequired.value = true;
+      if (currentUser.value?.role === "admin") {
+        fetchUsers();
+      }
+    }
+    fetchLatestTmdb();
+    fetchSyncStatus();
+    statusTimer = window.setInterval(fetchSyncStatus, 60000);
+  } catch (err) {
+    console.error(err);
+  } finally {
+    authLoading.value = false;
+  }
+}
+
+async function doLogin() {
+  authLoading.value = true;
+  authError.value = "";
+  try {
+    const resp = await fetch(`${apiBase}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(loginForm.value),
+    });
+    if (!resp.ok) {
+      authError.value = "登录失败";
+      return;
+    }
+    const data = await resp.json();
+    authToken.value = data.token;
+    localStorage.setItem("auth_token", data.token);
+    currentUser.value = { username: data.username, role: data.role };
+    authRequired.value = true;
+    if (currentUser.value?.role === "admin") {
+      fetchUsers();
+    }
+    fetchLatestTmdb();
+    fetchSyncStatus();
+    statusTimer = window.setInterval(fetchSyncStatus, 60000);
+  } catch (err) {
+    console.error(err);
+    authError.value = "登录失败";
+  } finally {
+    authLoading.value = false;
+  }
+}
+
+function logout() {
+  authToken.value = "";
+  localStorage.removeItem("auth_token");
+  currentUser.value = null;
+  authRequired.value = true;
+  if (statusTimer) {
+    window.clearInterval(statusTimer);
+    statusTimer = null;
+  }
+}
+
+async function fetchUsers() {
+  if (!isAdmin.value) return;
+  userLoading.value = true;
+  userError.value = "";
+  try {
+    const resp = await apiFetch(`${apiBase}/auth/users`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    users.value = data.users || [];
+  } catch (err) {
+    console.error(err);
+    userError.value = "获取用户失败";
+  } finally {
+    userLoading.value = false;
+  }
+}
+
+async function createUser() {
+  if (!isAdmin.value) return;
+  userLoading.value = true;
+  userError.value = "";
+  try {
+    const payload = { ...newUser.value };
+    const resp = await apiFetch(`${apiBase}/auth/users`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    newUser.value = { username: "", password: "", role: "user" };
+    fetchUsers();
+  } catch (err) {
+    console.error(err);
+    userError.value = "添加失败";
+  } finally {
+    userLoading.value = false;
+  }
+}
+
+async function deleteUser(username) {
+  if (!isAdmin.value) return;
+  userLoading.value = true;
+  userError.value = "";
+  try {
+    const resp = await apiFetch(`${apiBase}/auth/users/${encodeURIComponent(username)}`, {
+      method: "DELETE",
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    fetchUsers();
+  } catch (err) {
+    console.error(err);
+    userError.value = "删除失败";
+  } finally {
+    userLoading.value = false;
+  }
+}
+
 async function runSearch(resetPage = false) {
   if (!query.value.trim()) return;
   if (resetPage) {
@@ -336,7 +576,7 @@ async function runSearch(resetPage = false) {
       page_size: String(pageSize.value),
       cursor: String(cursor.value || 0),
     });
-    const resp = await fetch(`${apiBase}/search?${params.toString()}`);
+    const resp = await apiFetch(`${apiBase}/search?${params.toString()}`);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
     results.value = data.results || [];
@@ -358,10 +598,17 @@ function formatDate(value) {
   return date.toLocaleDateString();
 }
 
+function formatDateTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString();
+}
+
 async function fetchLatestTmdb() {
   latestLoading.value = true;
   try {
-    const resp = await fetch(`${apiBase}/tmdb_latest?limit=50`);
+    const resp = await apiFetch(`${apiBase}/tmdb_latest?limit=50`);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
     latestTmdb.value = data.results || [];
@@ -403,7 +650,7 @@ async function fetchLatestDetail(item) {
       tmdb_id: item.tmdb_id,
       content_type: item.type || "movie",
     });
-    const resp = await fetch(`${apiBase}/tmdb_detail?${params.toString()}`);
+    const resp = await apiFetch(`${apiBase}/tmdb_detail?${params.toString()}`);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
     latestDetail.value = data.detail
@@ -447,8 +694,29 @@ function splitTokens(text, mode = "default") {
     .filter((item) => item.length > 0);
 }
 
+async function fetchSyncStatus() {
+  statusLoading.value = true;
+  try {
+    const resp = await apiFetch(`${apiBase}/sync_status`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    syncStatus.value = await resp.json();
+  } catch (err) {
+    console.error(err);
+    syncStatus.value = null;
+  } finally {
+    statusLoading.value = false;
+  }
+}
+
 onMounted(() => {
-  fetchLatestTmdb();
+  loadMe();
+});
+
+onUnmounted(() => {
+  if (statusTimer) {
+    window.clearInterval(statusTimer);
+    statusTimer = null;
+  }
 });
 function prevPage() {
   if (!cursorStack.value.length) return;
@@ -483,7 +751,7 @@ async function fetchTorrentFiles(item) {
   }
   filesLoading.value = true;
   try {
-    const resp = await fetch(`${apiBase}/torrent_files?info_hash=\\x${infoHash}`);
+    const resp = await apiFetch(`${apiBase}/torrent_files?info_hash=\\x${infoHash}`);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
     selectedFiles.value = data.files || [];

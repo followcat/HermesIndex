@@ -22,6 +22,52 @@ body {
   min-height: 100vh;
 }
 
+.login-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.login-card {
+  width: min(420px, 90vw);
+  background: #121212;
+  border-radius: 22px;
+  padding: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: var(--shadow);
+  display: grid;
+  gap: 12px;
+}
+
+.login-card h1 {
+  margin: 0;
+  font-size: 28px;
+}
+
+.login-card p {
+  margin: 0;
+  color: var(--ink-soft);
+}
+
+.login-form {
+  display: grid;
+  gap: 12px;
+}
+
+.login-form input {
+  background: #0d0d0d;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 10px 12px;
+  color: var(--ink);
+}
+
+.login-error {
+  color: #ff8b8b;
+  font-size: 12px;
+}
+
 a {
   color: inherit;
   text-decoration: none;
@@ -355,6 +401,48 @@ input {
   gap: 14px;
 }
 
+.admin-panel {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: #121212;
+  display: grid;
+  gap: 10px;
+}
+
+.admin-panel h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.admin-actions {
+  display: grid;
+  gap: 8px;
+}
+
+.admin-actions input,
+.admin-actions select {
+  background: #0d0d0d;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 8px 10px;
+  color: var(--ink);
+}
+
+.admin-list {
+  display: grid;
+  gap: 8px;
+}
+
+.admin-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+  font-size: 12px;
+}
+
 .detail h2 {
   margin: 0;
   font-size: 22px;
@@ -442,6 +530,64 @@ input {
   margin-top: 24px;
   font-size: 12px;
   color: var(--ink-soft);
+}
+
+.status-footer {
+  margin: 24px 56px 40px;
+  padding: 18px 20px;
+  border-radius: 18px;
+  background: #121212;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  display: grid;
+  gap: 10px;
+}
+
+.status-title {
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.status-line {
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+.status-lines {
+  display: grid;
+  gap: 8px;
+}
+
+.status-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.status-card {
+  padding: 12px;
+  border-radius: 12px;
+  background: #181818;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.status-card-title {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.status-card-body {
+  color: var(--ink-soft);
+  display: grid;
+  gap: 4px;
+}
+
+@media (max-width: 1100px) {
+  .status-footer {
+    margin: 20px;
+  }
 }
 
 @keyframes floatIn {
