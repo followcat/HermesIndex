@@ -36,6 +36,32 @@ if not sources:
 
 with psycopg.connect(dsn, autocommit=True) as conn:
     with conn.cursor() as cur:
+        cur.execute(
+            "SELECT to_regclass(%s)",
+            (f"{schema}.tmdb_enrichment",),
+        )
+        tmdb_table = cur.fetchone()[0]
+        if tmdb_table:
+            cur.execute(f"SELECT count(*) FROM {schema}.tmdb_enrichment")
+            tmdb_total = cur.fetchone()[0]
+            cur.execute(f"SELECT max(updated_at) FROM {schema}.tmdb_enrichment")
+            tmdb_max_updated = cur.fetchone()[0]
+            cur.execute(
+                f"""
+                SELECT count(*)
+                FROM {schema}.tmdb_enrichment
+                WHERE (aka IS NULL OR aka = '')
+                  AND (keywords IS NULL OR keywords = '')
+                """
+            )
+            tmdb_missing = cur.fetchone()[0]
+            print("TMDB enrichment:")
+            print(f"  Table: {schema}.tmdb_enrichment")
+            print(f"  Total rows: {tmdb_total}")
+            print(f"  Max updated_at: {tmdb_max_updated}")
+            print(f"  Missing aka/keywords: {tmdb_missing}")
+        else:
+            print("TMDB enrichment: not found")
         for source in sources:
             name = source.get("name")
             pg_cfg = source.get("pg", {})
