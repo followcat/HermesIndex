@@ -1,8 +1,12 @@
+import re
 from typing import Any, Dict, Iterable, List, Sequence
 
 import psycopg
+import logging
 from psycopg import sql
 from psycopg.rows import dict_row
+
+logger = logging.getLogger(__name__)
 
 SYNC_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS sync_state (
@@ -131,13 +135,38 @@ class PGClient:
         joins = pg_cfg.get("joins", [])
         id_list = list(ids)
         placeholders = sql.SQL(", ").join(sql.Placeholder() for _ in id_list)
-        select_cols = [sql.SQL("t.{}").format(sql.Identifier(f)) for f in fields]
-        group_by_cols = [sql.SQL("t.{}").format(sql.Identifier(f)) for f in fields]
+        select_cols = []
+        group_by_cols = []
+        for f in fields:
+            if f == id_field:
+                select_cols.append(
+                    sql.SQL("t.{col}::text AS {alias}").format(
+                        col=sql.Identifier(f),
+                        alias=sql.Identifier(f),
+                    )
+                )
+                group_by_cols.append(
+                    sql.SQL("t.{col}::text").format(col=sql.Identifier(f))
+                )
+            else:
+                select_cols.append(sql.SQL("t.{}").format(sql.Identifier(f)))
+                group_by_cols.append(sql.SQL("t.{}").format(sql.Identifier(f)))
         join_clauses: List[sql.Composable] = []
         has_agg = False
 
         for idx, join_cfg in enumerate(joins):
-            join_table = join_cfg["table"]
+            if not isinstance(join_cfg, dict):
+                logger.warning("Skip invalid join config for source=%s index=%d", source.get("name"), idx)
+                continue
+            join_table = join_cfg.get("table")
+            join_on = join_cfg.get("on")
+            if not join_table or not join_on:
+                logger.warning(
+                    "Skip join without table/on for source=%s index=%d",
+                    source.get("name"),
+                    idx,
+                )
+                continue
             join_alias = join_cfg.get("alias") or f"j{idx}"
             join_type = str(join_cfg.get("type", "left")).lower()
             if join_type not in {"left", "inner"}:
@@ -147,7 +176,7 @@ class PGClient:
                 sql.SQL(join_type.upper()),
                 self._table_identifier(join_table),
                 sql.Identifier(join_alias),
-                sql.SQL(join_cfg["on"]),
+                sql.SQL(join_on),
             )
             join_clauses.append(join_clause)
             for field_cfg in join_fields:
@@ -183,7 +212,16 @@ class PGClient:
                         )
                     )
 
-        query = sql.SQL("SELECT {selects} FROM {table} AS t {joins} WHERE t.{id_field} IN ({placeholders})").format(
+        where_extra = pg_cfg.get("where")
+        base_query = sql.SQL(
+            "SELECT {selects} FROM {table} AS t {joins} WHERE t.{id_field}::text IN ({placeholders})"
+        )
+        if where_extra:
+            base_query = sql.SQL("{base} AND ({where})").format(
+                base=base_query,
+                where=sql.SQL(str(where_extra)),
+            )
+        query = base_query.format(
             selects=sql.SQL(", ").join(select_cols),
             table=self._table_identifier(table),
             joins=sql.SQL(" ").join(join_clauses) if join_clauses else sql.SQL(""),
@@ -203,6 +241,79 @@ class PGClient:
                 key = str(row[id_field])
                 result[key] = {k: row[k] for k in row}
             return result
+
+    def search_by_keyword(
+        self,
+        source: Dict[str, Any],
+        query: str,
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        pg_cfg = source["pg"]
+        table = pg_cfg["table"]
+        id_field = pg_cfg["id_field"]
+        text_field = pg_cfg["text_field"]
+        fields = pg_cfg.get("keyword_fields") or [text_field]
+        if not query:
+            return []
+        clauses = " OR ".join([f"{f} ILIKE %s" for f in fields])
+        sql_text = f"""
+        SELECT {id_field}::text AS pg_id, {text_field} AS title
+        FROM {table}
+        WHERE {clauses}
+        LIMIT %s
+        """
+        params = [f"%{query}%"] * len(fields) + [limit]
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(sql_text, params)
+            return cur.fetchall()
+
+    def fetch_torrent_files(self, schema: str, info_hash_text: str, limit: int = 2000) -> List[Dict[str, Any]]:
+        sql_text = sql.SQL(
+            """
+            SELECT index, path, extension, size, updated_at
+            FROM {schema}.torrent_files_view
+            WHERE info_hash::text = %s
+            ORDER BY index
+            LIMIT %s
+            """
+        ).format(schema=sql.Identifier(schema))
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(sql_text, (info_hash_text, limit))
+            return cur.fetchall()
+
+    def search_tmdb_expansions(
+        self,
+        schema: str,
+        query: str,
+        limit: int = 20,
+    ) -> Dict[str, int]:
+        if not query:
+            return {}
+        sql_text = sql.SQL(
+            """
+            SELECT aka, keywords
+            FROM {schema}.tmdb_enrichment
+            WHERE aka ILIKE %s OR keywords ILIKE %s
+            LIMIT %s
+            """
+        ).format(schema=sql.Identifier(schema))
+        pattern = f"%{query}%"
+        tokens: Dict[str, int] = {}
+        splitter = re.compile(r"[，,|/·\\s]+")
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(sql_text, (pattern, pattern, limit))
+            for row in cur.fetchall():
+                aka = row.get("aka") or ""
+                keywords = row.get("keywords") or ""
+                for item in splitter.split(str(aka)):
+                    token = item.strip()
+                    if token:
+                        tokens[token] = max(tokens.get(token, 0), 2)
+                for item in splitter.split(str(keywords)):
+                    token = item.strip()
+                    if token:
+                        tokens[token] = max(tokens.get(token, 0), 1)
+        return tokens
 
     @staticmethod
     def _table_identifier(table: str) -> sql.Identifier:

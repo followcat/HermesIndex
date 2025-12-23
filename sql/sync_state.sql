@@ -3,7 +3,7 @@ CREATE TABLE IF NOT EXISTS sync_state (
     pg_id TEXT NOT NULL,
     text_hash TEXT,
     embedding_version TEXT,
-    vector_id BIGINT,
+    vector_id TEXT,
     nsfw_score REAL,
     updated_at TIMESTAMPTZ DEFAULT now(),
     last_error TEXT,
