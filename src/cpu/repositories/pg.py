@@ -345,6 +345,32 @@ class PGClient:
             cur.execute(sql_text, (limit,))
             return cur.fetchall()
 
+    def fetch_tmdb_detail(
+        self,
+        schema: str,
+        content_type: str,
+        tmdb_id: str,
+    ) -> Dict[str, Any] | None:
+        sql_text = sql.SQL(
+            """
+            SELECT content_type,
+                   tmdb_id,
+                   aka,
+                   keywords,
+                   actors,
+                   directors,
+                   plot,
+                   genre,
+                   updated_at
+            FROM {schema}.tmdb_enrichment
+            WHERE content_type = %s AND tmdb_id = %s
+            """
+        ).format(schema=sql.Identifier(schema))
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(sql_text, (content_type, tmdb_id))
+            row = cur.fetchone()
+            return row
+
     @staticmethod
     def _table_identifier(table: str) -> sql.Identifier:
         if "." in table:

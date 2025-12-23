@@ -172,11 +172,40 @@ input {
   border-radius: 14px;
   border: 1px solid rgba(27, 27, 27, 0.08);
   background: rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.latest-item:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 24px rgba(27, 27, 27, 0.12);
+}
+
+.latest-item.active {
+  border-color: rgba(240, 101, 47, 0.6);
+  box-shadow: 0 10px 22px rgba(240, 101, 47, 0.2);
 }
 
 .latest-title {
   font-weight: 600;
   margin-bottom: 6px;
+}
+
+.latest-detail {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(27, 27, 27, 0.08);
+  background: rgba(255, 255, 255, 0.65);
+  display: grid;
+  gap: 8px;
+}
+
+.latest-detail p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-soft);
+  line-height: 1.5;
 }
 
 .result-card {

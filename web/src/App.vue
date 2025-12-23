@@ -76,7 +76,13 @@
         <div v-if="latestLoading" class="empty">加载中...</div>
         <div v-else-if="latestTmdb.length === 0" class="empty">暂无记录</div>
         <div v-else class="latest-list">
-          <div v-for="item in latestTmdb" :key="item.content_uid" class="latest-item">
+          <div
+            v-for="item in latestTmdb"
+            :key="item.content_uid"
+            class="latest-item"
+            :class="{ active: selectedLatest?.content_uid === item.content_uid }"
+            @click="selectLatest(item)"
+          >
             <div class="latest-title">
               {{ item.title }}
               <span v-if="item.release_year">({{ item.release_year }})</span>
@@ -86,6 +92,22 @@
               <span v-if="item.type">{{ item.type }}</span>
               <span v-if="item.genre">{{ item.genre }}</span>
               <span v-if="item.updated_at">更新 {{ formatDate(item.updated_at) }}</span>
+            </div>
+          </div>
+        </div>
+        <div class="latest-detail">
+          <div v-if="latestDetailLoading" class="empty">加载详情...</div>
+          <div v-else-if="!latestDetail" class="empty">暂无详情</div>
+          <div v-else class="latest-detail-body">
+            <div class="meta">
+              <span v-if="latestDetail.genre">类型: {{ latestDetail.genre }}</span>
+              <span v-if="latestDetail.directors">导演: {{ latestDetail.directors }}</span>
+              <span v-if="latestDetail.actors">演员: {{ latestDetail.actors }}</span>
+            </div>
+            <p v-if="latestDetail.plot">{{ latestDetail.plot }}</p>
+            <div class="meta">
+              <span v-if="latestDetail.aka">别名: {{ latestDetail.aka }}</span>
+              <span v-if="latestDetail.keywords">关键词: {{ latestDetail.keywords }}</span>
             </div>
           </div>
         </div>
@@ -160,6 +182,9 @@ const selectedFiles = ref([]);
 const filesLoading = ref(false);
 const latestTmdb = ref([]);
 const latestLoading = ref(false);
+const selectedLatest = ref(null);
+const latestDetail = ref(null);
+const latestDetailLoading = ref(false);
 
 const emptyMessage = computed(() => {
   if (loading.value) return "搜索中...";
@@ -269,11 +294,42 @@ async function fetchLatestTmdb() {
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
     latestTmdb.value = data.results || [];
+    if (latestTmdb.value.length && !selectedLatest.value) {
+      selectLatest(latestTmdb.value[0]);
+    }
   } catch (err) {
     console.error(err);
     latestTmdb.value = [];
   } finally {
     latestLoading.value = false;
+  }
+}
+
+function selectLatest(item) {
+  selectedLatest.value = item;
+  fetchLatestDetail(item);
+}
+
+async function fetchLatestDetail(item) {
+  if (!item?.tmdb_id) {
+    latestDetail.value = null;
+    return;
+  }
+  latestDetailLoading.value = true;
+  try {
+    const params = new URLSearchParams({
+      tmdb_id: item.tmdb_id,
+      content_type: item.type || "movie",
+    });
+    const resp = await fetch(`${apiBase}/tmdb_detail?${params.toString()}`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    latestDetail.value = data.detail || null;
+  } catch (err) {
+    console.error(err);
+    latestDetail.value = null;
+  } finally {
+    latestDetailLoading.value = false;
   }
 }
 
