@@ -1,19 +1,92 @@
 import argparse
 import logging
 import time
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from typing import Any, Dict, List
 
 import numpy as np
 
 from cpu.clients.gpu_client import GPUClient
-from cpu.config import load_config, source_batch_size
-from cpu.core.utils import text_hash
+from cpu.config import load_config, source_batch_size, source_concurrency
+from cpu.core.utils import normalize_title_text, text_hash
 from cpu.repositories.pg import PGClient
 from cpu.repositories.vector_store import BaseVectorStore, create_vector_store
 from cpu.services.tmdb_enrich import ensure_tmdb_enrichment
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
+
+
+def _parse_genre_tags(raw: Any) -> List[str]:
+    if not raw:
+        return []
+    text = str(raw)
+    parts = [p.strip() for p in text.replace("，", ",").split(",") if p.strip()]
+    return parts
+
+
+def _extract_extension(text: str) -> str:
+    if not text:
+        return ""
+    if "." not in text:
+        return ""
+    ext = text.rsplit(".", 1)[-1]
+    return ext.lower().strip()
+
+
+def _detect_file_type(extension: str) -> str:
+    if not extension:
+        return "other"
+    video = {"mp4", "mkv", "avi", "mov", "wmv", "flv", "ts", "m2ts", "webm"}
+    audio = {"mp3", "flac", "aac", "m4a", "ogg", "wav"}
+    image = {"jpg", "jpeg", "png", "gif", "webp", "bmp"}
+    subtitle = {"srt", "ass", "ssa", "vtt", "sub"}
+    archive = {"zip", "rar", "7z", "tar", "gz"}
+    ext = extension.lower()
+    if ext in video:
+        return "video"
+    if ext in audio:
+        return "audio"
+    if ext in image:
+        return "image"
+    if ext in subtitle:
+        return "subtitle"
+    if ext in archive:
+        return "archive"
+    return "other"
+
+
+def _detect_languages(text: str) -> tuple[List[str], List[str]]:
+    if not text:
+        return [], []
+    lower = text.lower()
+    audio_langs: List[str] = []
+    subtitle_langs: List[str] = []
+
+    def add_lang(target: List[str], code: str) -> None:
+        if code not in target:
+            target.append(code)
+
+    lang_map = {
+        "zh": ["中文", "国语", "简体", "繁体", "chinese", "chs", "cht", "chi", "mandarin"],
+        "en": ["英文", "英语", "english", "eng"],
+        "jp": ["日语", "日文", "japanese", "jpn"],
+        "kr": ["韩语", "韩文", "korean", "kor"],
+        "fr": ["法语", "french", "fre"],
+        "de": ["德语", "german", "ger"],
+        "es": ["西语", "西班牙", "spanish", "spa"],
+        "ru": ["俄语", "russian", "rus"],
+    }
+    subtitle_keys = ["字幕", "中字", "双语", "sub", "subs", "subtitle"]
+    is_subtitle = any(k in lower for k in subtitle_keys)
+    for code, keys in lang_map.items():
+        if any(k.lower() in lower for k in keys):
+            if is_subtitle:
+                add_lang(subtitle_langs, code)
+            else:
+                add_lang(audio_langs, code)
+                add_lang(subtitle_langs, code)
+    return audio_langs, subtitle_langs
 
 
 def sync_source(
@@ -24,6 +97,7 @@ def sync_source(
     embedding_version: str,
     nsfw_threshold: float,
     batch_size: int,
+    concurrency: int,
     tmdb_cfg: Dict[str, Any],
     tmdb_schema: str,
 ) -> None:
@@ -31,20 +105,11 @@ def sync_source(
     total_rows = 0
     total_batches = 0
     total_time = 0.0
-    while True:
+    concurrency = max(int(concurrency or 1), 1)
+    in_flight: set[str] = set()
+
+    def process_batch(rows: List[Dict[str, Any]]) -> Dict[str, float]:
         batch_start = time.perf_counter()
-        fetch_start = time.perf_counter()
-        rows = pg_client.fetch_pending(source, batch_size=batch_size)
-        fetch_cost = time.perf_counter() - fetch_start
-        if not rows:
-            logger.info("No pending rows for source=%s", source["name"])
-            break
-        logger.info(
-            "Fetched pending rows=%d for source=%s cost=%.3fs",
-            len(rows),
-            source["name"],
-            fetch_cost,
-        )
         if source.get("pg", {}).get("tmdb_enrich"):
             tmdb_refs = [
                 (r.get("type"), r.get("tmdb_id")) for r in rows if r.get("tmdb_id") and r.get("type")
@@ -61,11 +126,22 @@ def sync_source(
                 enrich_cost = time.perf_counter() - enrich_start
                 ids = [str(r["pg_id"]) for r in rows]
                 refresh_start = time.perf_counter()
-                refreshed = pg_client.fetch_by_ids(source, ids)
+                extra_fields = list(source.get("pg", {}).get("extra_fields", []))
+                if "genre" not in extra_fields:
+                    extra_fields.append("genre")
+                if "keywords" not in extra_fields:
+                    extra_fields.append("keywords")
+                source_cfg = {
+                    **source,
+                    "pg": {
+                        **source.get("pg", {}),
+                        "extra_fields": extra_fields,
+                    },
+                }
+                refreshed = pg_client.fetch_by_ids(source_cfg, ids)
                 refresh_cost = time.perf_counter() - refresh_start
                 updated_rows: List[Dict[str, Any]] = []
                 updated_at_field = source.get("pg", {}).get("updated_at_field")
-                extra_fields = source.get("pg", {}).get("extra_fields", [])
                 for pg_id in ids:
                     pg_row = refreshed.get(pg_id)
                     if not pg_row:
@@ -90,7 +166,11 @@ def sync_source(
                     enrich_cost,
                     refresh_cost,
                 )
-        texts = [r["text"] for r in rows]
+        texts = []
+        for r in rows:
+            original = str(r.get("text", ""))
+            cleaned = normalize_title_text(original)
+            texts.append(cleaned if cleaned else original)
         logger.info("Embedding batch size=%d for source=%s", len(texts), source["name"])
         try:
             infer_start = time.perf_counter()
@@ -100,7 +180,7 @@ def sync_source(
             logger.exception("GPU inference failed: %s", exc)
             for r in rows:
                 pg_client.mark_failure(source["name"], str(r["pg_id"]), str(exc))
-            break
+            raise
         if embeddings.shape[1] != vector_store.dim:
             raise ValueError(
                 f"Embedding dim mismatch: got {embeddings.shape[1]}, expected {vector_store.dim}"
@@ -109,6 +189,12 @@ def sync_source(
         updates: List[Dict[str, Any]] = []
         for row, score in zip(rows, scores):
             nsfw_flag = score >= nsfw_threshold if source.get("tagging", {}).get("nsfw", True) else False
+            tmdb_id = row.get("tmdb_id")
+            has_tmdb = bool(tmdb_id)
+            genre_tags = _parse_genre_tags(row.get("genre"))
+            extension = row.get("extension") or _extract_extension(str(row.get("text", "")))
+            file_type = _detect_file_type(str(extension))
+            audio_langs, subtitle_langs = _detect_languages(str(row.get("text", "")))
             metas.append(
                 {
                     "source": source["name"],
@@ -117,6 +203,12 @@ def sync_source(
                     "nsfw_score": float(score),
                     "text_hash": row.get("text_hash") or text_hash(row["text"]),
                     "embedding_version": embedding_version,
+                    "has_tmdb": has_tmdb,
+                    "tmdb_id": str(tmdb_id) if tmdb_id is not None else None,
+                    "genre_tags": genre_tags,
+                    "file_type": file_type,
+                    "audio_langs": audio_langs,
+                    "subtitle_langs": subtitle_langs,
                 }
             )
             updates.append(
@@ -153,9 +245,68 @@ def sync_source(
             batch_cost,
             throughput,
         )
-        total_rows += len(rows)
-        total_batches += 1
-        total_time += batch_cost
+        return {"rows": float(len(rows)), "batch_cost": batch_cost}
+
+    def drain_completed(block: bool) -> None:
+        nonlocal total_rows, total_batches, total_time
+        if not futures:
+            return
+        done = None
+        if block:
+            done, _ = wait(futures, return_when=FIRST_COMPLETED)
+        else:
+            done = [f for f in futures if f.done()]
+        for future in done:
+            ids = futures.pop(future, [])
+            for pg_id in ids:
+                in_flight.discard(pg_id)
+            result = future.result()
+            total_rows += int(result["rows"])
+            total_batches += 1
+            total_time += float(result["batch_cost"])
+
+    with ThreadPoolExecutor(max_workers=concurrency) as executor:
+        futures: Dict[Any, List[str]] = {}
+        while True:
+            drain_completed(block=False)
+            if len(futures) >= concurrency:
+                drain_completed(block=True)
+                continue
+            fetch_start = time.perf_counter()
+            rows = pg_client.fetch_pending(source, batch_size=batch_size)
+            fetch_cost = time.perf_counter() - fetch_start
+            if not rows:
+                drain_completed(block=True)
+                if not futures:
+                    logger.info("No pending rows for source=%s", source["name"])
+                    break
+                continue
+            filtered = [r for r in rows if str(r["pg_id"]) not in in_flight]
+            if not filtered:
+                logger.info(
+                    "Fetched pending rows=%d for source=%s cost=%.3fs skipped_inflight=%d",
+                    len(rows),
+                    source["name"],
+                    fetch_cost,
+                    len(rows),
+                )
+                if futures:
+                    drain_completed(block=True)
+                else:
+                    time.sleep(0.2)
+                continue
+            logger.info(
+                "Fetched pending rows=%d for source=%s cost=%.3fs",
+                len(filtered),
+                source["name"],
+                fetch_cost,
+            )
+            batch_ids = [str(r["pg_id"]) for r in filtered]
+            for pg_id in batch_ids:
+                in_flight.add(pg_id)
+            future = executor.submit(process_batch, filtered)
+            futures[future] = batch_ids
+            drain_completed(block=False)
     if total_batches:
         avg_throughput = total_rows / total_time if total_time > 0 else 0.0
         logger.info(
@@ -163,9 +314,9 @@ def sync_source(
             source["name"],
             total_batches,
             total_rows,
-            total_time,
-            avg_throughput,
-        )
+        total_time,
+        avg_throughput,
+    )
 
 
 def run_sync(config_path: str, target_source: str | None = None) -> None:
@@ -181,6 +332,7 @@ def run_sync(config_path: str, target_source: str | None = None) -> None:
         return
     for source in sources:
         batch_size = source_batch_size(source, cfg.sync)
+        concurrency = source_concurrency(source, cfg.sync)
         sync_source(
             source,
             vector_store,
@@ -189,6 +341,7 @@ def run_sync(config_path: str, target_source: str | None = None) -> None:
             cfg.embedding_model_version,
             cfg.nsfw_threshold,
             batch_size,
+            concurrency,
             cfg.tmdb,
             tmdb_schema,
         )
