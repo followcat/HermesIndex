@@ -39,6 +39,14 @@ tmdb:
   #   directors: 5
   #   aka: 10
 
+# 简易认证（可选）
+auth:
+  enabled: false
+  admin_user: "admin"
+  admin_password: "CHANGE_ME"
+  user_store_path: "data/users.json"
+  token_ttl_seconds: 86400
+
 vector_store:
   type: "hnsw"
   path: "./data/index"

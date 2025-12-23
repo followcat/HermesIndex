@@ -82,6 +82,19 @@ npm run dev
 
 访问 `http://127.0.0.1:5173`，搜索结果支持详情展示与磁力链接复制。
 
+认证与用户管理
+--------------
+开启后，前端会显示登录页，管理员可创建/删除用户（文件存储）。
+
+```
+auth:
+  enabled: true
+  admin_user: "admin"
+  admin_password: "CHANGE_ME"
+  user_store_path: "data/users.json"
+  token_ttl_seconds: 86400
+```
+
 启动 GPU 推理服务
 ----------------
 ```
