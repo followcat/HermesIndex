@@ -14,9 +14,6 @@ case "$command" in
   cpu)
     scripts/run_cpu_service.sh "$@"
     ;;
-  sync)
-    scripts/run_sync.sh "$@"
-    ;;
   sync-all)
     scripts/run_sync_all.sh "$@"
     ;;
@@ -24,7 +21,7 @@ case "$command" in
     scripts/purge_hermes_data.sh "$@"
     ;;
   *)
-    echo "Usage: scripts/entry.sh {gpu-multi|gpu-single|cpu|sync|sync-all|purge}" >&2
+    echo "Usage: scripts/entry.sh {gpu-multi|gpu-single|cpu|sync-all|purge}" >&2
     exit 1
     ;;
 esac

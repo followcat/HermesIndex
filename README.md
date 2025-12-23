@@ -66,10 +66,9 @@ psql "$BITMAGNET_DSN" -f sql/bitmagnet_indexes.sql
 - `scripts/run_gpu_multi.sh`：单进程多卡 GPU 服务（默认 `GPU_DEVICES=0,1,2,3`）
 - `scripts/run_gpu_single.sh`：单进程单卡 GPU 服务
 - `scripts/run_cpu_service.sh`：CPU 搜索服务
-- `scripts/run_sync.sh`：同步任务（可用 `SOURCE=...` 指定 source）
 - `scripts/run_sync_all.sh`：同步任务 + TMDB enrich 并行（loop）
 - `scripts/purge_hermes_data.sh`：清空 hermes schema 与向量库（需要二次确认）
-- `scripts/entry.sh`：统一入口（`gpu-multi|gpu-single|cpu|sync|sync-all|purge`）
+- `scripts/entry.sh`：统一入口（`gpu-multi|gpu-single|cpu|sync-all|purge`）
 
 前端（Vue）
 -----------
