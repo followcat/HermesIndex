@@ -1,6 +1,7 @@
 import json
 import os
 import threading
+import uuid
 from typing import Any, Dict, List
 
 import hnswlib
@@ -13,7 +14,9 @@ class BaseVectorStore:
     def add(self, embeddings: np.ndarray, metas: List[Dict[str, Any]]) -> List[Any]:
         raise NotImplementedError
 
-    def query(self, embedding: np.ndarray, topk: int = 20) -> List[Dict[str, Any]]:
+    def query(
+        self, embedding: np.ndarray, topk: int = 20, metadata_filter: Dict[str, Any] | None = None
+    ) -> List[Dict[str, Any]]:
         raise NotImplementedError
 
     def size(self) -> int:
@@ -109,7 +112,9 @@ class HNSWVectorStore(BaseVectorStore):
             self._persist()
         return labels
 
-    def query(self, embedding: np.ndarray, topk: int = 20) -> List[Dict[str, Any]]:
+    def query(
+        self, embedding: np.ndarray, topk: int = 20, metadata_filter: Dict[str, Any] | None = None
+    ) -> List[Dict[str, Any]]:
         if not self.meta:
             return []
         k = min(topk, len(self.meta))
@@ -146,6 +151,7 @@ class QdrantVectorStore(BaseVectorStore):
         self.dim = dim
         self.collection = collection
         self.metric = metric
+        self.url = url
         distance = Distance.COSINE if metric == "cosine" else Distance.DOT
         self.client = QdrantClient(url=url, api_key=api_key, timeout=60)
         if collection not in [c.name for c in self.client.get_collections().collections]:
@@ -159,21 +165,118 @@ class QdrantVectorStore(BaseVectorStore):
 
         points: List[PointStruct] = []
         for idx, (emb, meta) in enumerate(zip(embeddings, metas)):
-            point_id = f"{meta['source']}:{meta['pg_id']}"
+            raw_id = f"{meta['source']}:{meta['pg_id']}"
+            point_id = str(uuid.uuid5(uuid.NAMESPACE_URL, raw_id))
             points.append(PointStruct(id=point_id, vector=emb.tolist(), payload=meta))
         self.client.upsert(collection_name=self.collection, points=points, wait=True)
         return [str(p.id) for p in points]
 
-    def query(self, embedding: np.ndarray, topk: int = 20) -> List[Dict[str, Any]]:
-        hits = self.client.search(
-            collection_name=self.collection,
-            query_vector=embedding[0].tolist(),
-            limit=topk,
-        )
+    def query(
+        self, embedding: np.ndarray, topk: int = 20, metadata_filter: Dict[str, Any] | None = None
+    ) -> List[Dict[str, Any]]:
+        query_filter = None
+        if metadata_filter and (metadata_filter.get("has_tmdb") or metadata_filter.get("genres")):
+            from qdrant_client.http.models import (
+                Filter,
+                FieldCondition,
+                MatchAny,
+                MatchValue,
+            )
+
+            must_conditions = []
+            if metadata_filter.get("has_tmdb"):
+                must_conditions.append(FieldCondition(key="has_tmdb", match=MatchValue(value=True)))
+            genres = metadata_filter.get("genres") or []
+            if genres:
+                must_conditions.append(
+                    FieldCondition(key="genre_tags", match=MatchAny(any=genres))
+                )
+            file_type = metadata_filter.get("file_type")
+            if file_type:
+                must_conditions.append(
+                    FieldCondition(key="file_type", match=MatchValue(value=file_type))
+                )
+            audio_langs = metadata_filter.get("audio_langs") or []
+            if audio_langs:
+                must_conditions.append(
+                    FieldCondition(key="audio_langs", match=MatchAny(any=audio_langs))
+                )
+            subtitle_langs = metadata_filter.get("subtitle_langs") or []
+            if subtitle_langs:
+                must_conditions.append(
+                    FieldCondition(key="subtitle_langs", match=MatchAny(any=subtitle_langs))
+                )
+            if must_conditions:
+                query_filter = Filter(must=must_conditions)
+        query_vector = embedding[0].tolist()
+        if hasattr(self.client, "search"):
+            hits = self.client.search(
+                collection_name=self.collection,
+                query_vector=query_vector,
+                limit=topk,
+                with_payload=True,
+                query_filter=query_filter,
+            )
+        elif hasattr(self.client, "search_points"):
+            hits = self.client.search_points(
+                collection_name=self.collection,
+                query_vector=query_vector,
+                limit=topk,
+                with_payload=True,
+                query_filter=query_filter,
+            )
+        else:
+            import httpx
+
+            base_url = self.url.rstrip("/")
+            filter_payload = None
+            if metadata_filter and (metadata_filter.get("has_tmdb") or metadata_filter.get("genres")):
+                must_conditions = []
+                if metadata_filter.get("has_tmdb"):
+                    must_conditions.append({"key": "has_tmdb", "match": {"value": True}})
+                genres = metadata_filter.get("genres") or []
+                if genres:
+                    must_conditions.append(
+                        {"key": "genre_tags", "match": {"any": genres}}
+                    )
+                file_type = metadata_filter.get("file_type")
+                if file_type:
+                    must_conditions.append(
+                        {"key": "file_type", "match": {"value": file_type}}
+                    )
+                audio_langs = metadata_filter.get("audio_langs") or []
+                if audio_langs:
+                    must_conditions.append(
+                        {"key": "audio_langs", "match": {"any": audio_langs}}
+                    )
+                subtitle_langs = metadata_filter.get("subtitle_langs") or []
+                if subtitle_langs:
+                    must_conditions.append(
+                        {"key": "subtitle_langs", "match": {"any": subtitle_langs}}
+                    )
+                if must_conditions:
+                    filter_payload = {"must": must_conditions}
+            resp = httpx.post(
+                f"{base_url}/collections/{self.collection}/points/search",
+                json={
+                    "vector": query_vector,
+                    "limit": topk,
+                    "with_payload": True,
+                    "filter": filter_payload,
+                },
+                timeout=30,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            hits = data.get("result", [])
         results: List[Dict[str, Any]] = []
         for hit in hits:
-            payload = hit.payload or {}
-            payload["score"] = float(hit.score)
+            if hasattr(hit, "payload"):
+                payload = hit.payload or {}
+                payload["score"] = float(hit.score)
+            else:
+                payload = hit.get("payload") or {}
+                payload["score"] = float(hit.get("score", 0.0))
             results.append(payload)
         return results
 
@@ -228,7 +331,9 @@ class MilvusVectorStore(BaseVectorStore):
         self.collection.flush()
         return ids
 
-    def query(self, embedding: np.ndarray, topk: int = 20) -> List[Dict[str, Any]]:
+    def query(
+        self, embedding: np.ndarray, topk: int = 20, metadata_filter: Dict[str, Any] | None = None
+    ) -> List[Dict[str, Any]]:
         expr = ""
         search_params = {"metric_type": "IP" if self.metric == "dot" else "COSINE"}
         res = self.collection.search(
