@@ -8,6 +8,10 @@ __pycache__/
 # Data and indices
 data/
 
+# Frontend artifacts
+web/node_modules/
+web/dist/
+
 # Local configs
 configs/*.local.yaml
 configs/bitmagnet.yaml

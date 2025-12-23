@@ -55,6 +55,12 @@ bitmagnet 索引建议
 psql "$BITMAGNET_DSN" -f sql/bitmagnet_indexes.sql
 ```
 
+短文本检索优化
+--------------
+- 同步/查询会做基础文本清洗（去除分辨率/编码/格式等噪声标记）。
+- 对 BGE 模型默认加检索提示前缀以提升短文本语义召回。
+- 支持在 Qdrant payload 中基于类型/语言/字幕进行过滤。
+
 运行脚本（scripts/）
 -------------------
 - `scripts/run_gpu_multi.sh`：单进程多卡 GPU 服务（默认 `GPU_DEVICES=0,1,2,3`）
@@ -63,6 +69,18 @@ psql "$BITMAGNET_DSN" -f sql/bitmagnet_indexes.sql
 - `scripts/run_sync.sh`：同步任务（可用 `SOURCE=...` 指定 source）
 - `scripts/purge_hermes_data.sh`：清空 hermes schema 与向量库（需要二次确认）
 - `scripts/entry.sh`：统一入口（`gpu-multi|gpu-single|cpu|sync|purge`）
+
+前端（Vue）
+-----------
+位于 `web/`，默认走 `/api` 代理到 `http://127.0.0.1:8000`。
+
+```
+cd web
+npm install
+npm run dev
+```
+
+访问 `http://127.0.0.1:5173`，搜索结果支持详情展示与磁力链接复制。
 
 启动 GPU 推理服务
 ----------------
