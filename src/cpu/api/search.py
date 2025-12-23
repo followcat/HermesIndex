@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from cpu.config import load_config
 from cpu.core.embedder import LocalEmbedder
+from cpu.core.utils import normalize_title_text
 from cpu.clients.gpu_client import GPUClient
 from cpu.repositories.pg import PGClient
 from cpu.repositories.vector_store import create_vector_store
@@ -36,6 +37,14 @@ class SearchResult(BaseModel):
     metadata: Dict[str, Any] = {}
 
 
+class TorrentFile(BaseModel):
+    index: int
+    path: str
+    extension: str | None = None
+    size: int | None = None
+    updated_at: str | None = None
+
+
 def embed_query(text: str) -> np.ndarray:
     if not text:
         raise HTTPException(status_code=400, detail="Empty query")
@@ -52,6 +61,161 @@ def embed_query(text: str) -> np.ndarray:
     raise HTTPException(status_code=500, detail="No embedding backend available")
 
 
+def extract_genre_filters(query: str) -> List[str]:
+    mapping = {
+        "惊悚": ["惊悚", "Thriller"],
+        "恐怖": ["恐怖", "Horror"],
+        "悬疑": ["悬疑", "Mystery"],
+        "动作": ["动作", "Action"],
+        "科幻": ["科幻", "Science Fiction"],
+        "犯罪": ["犯罪", "Crime"],
+        "爱情": ["爱情", "Romance"],
+        "喜剧": ["喜剧", "Comedy"],
+        "剧情": ["剧情", "Drama"],
+        "冒险": ["冒险", "Adventure"],
+        "动画": ["动画", "Animation"],
+        "奇幻": ["奇幻", "Fantasy"],
+        "战争": ["战争", "War"],
+        "纪录": ["纪录", "Documentary"],
+        "家庭": ["家庭", "Family"],
+        "音乐": ["音乐", "Music"],
+        "历史": ["历史", "History"],
+        "西部": ["西部", "Western"],
+    }
+    hits: List[str] = []
+    for key, values in mapping.items():
+        if key in query:
+            hits.extend(values)
+    seen = set()
+    uniq: List[str] = []
+    for item in hits:
+        if item in seen:
+            continue
+        seen.add(item)
+        uniq.append(item)
+    return uniq
+
+
+def extract_query_filters(query: str) -> tuple[str, Dict[str, Any]]:
+    raw = query
+    filters: Dict[str, Any] = {}
+    lower = raw.lower()
+
+    file_type_map = {
+        "视频": "video",
+        "影片": "video",
+        "电影": "video",
+        "音频": "audio",
+        "音乐": "audio",
+        "字幕": "subtitle",
+        "图片": "image",
+        "图片类": "image",
+        "压缩": "archive",
+    }
+    for key, value in file_type_map.items():
+        if key in raw:
+            filters["file_type"] = value
+            lower = lower.replace(key.lower(), "")
+            raw = raw.replace(key, "")
+            break
+
+    audio_langs, subtitle_langs = _detect_query_languages(raw)
+    if audio_langs:
+        filters["audio_langs"] = audio_langs
+    if subtitle_langs:
+        filters["subtitle_langs"] = subtitle_langs
+
+    genres = extract_genre_filters(raw)
+    if genres:
+        filters["genres"] = genres
+
+    cleaned = raw.strip()
+    return cleaned if cleaned else query, filters
+
+
+def expand_query(query: str, extra_terms: Dict[str, int] | None = None) -> str:
+    if not query:
+        return query
+    expansions = {
+        "电影": ["影片", "movie", "film"],
+        "影片": ["电影", "movie", "film"],
+        "惊悚": ["thriller", "紧张"],
+        "恐怖": ["horror", "恐怖片"],
+        "悬疑": ["mystery", "疑案"],
+        "爱情": ["romance"],
+        "喜剧": ["comedy"],
+        "科幻": ["sci-fi", "science fiction"],
+        "动作": ["action"],
+        "战争": ["war"],
+        "动画": ["animation", "cartoon"],
+        "纪录": ["documentary", "doc"],
+        "犯罪": ["crime"],
+        "奇幻": ["fantasy"],
+        "冒险": ["adventure"],
+        "剧情": ["drama"],
+        "家庭": ["family"],
+        "音乐": ["music"],
+        "传记": ["biography", "biopic"],
+        "历史": ["history"],
+        "西部": ["western"],
+        "体育": ["sport", "sports"],
+        "真人秀": ["reality"],
+        "综艺": ["variety"],
+        "剧集": ["series", "tv", "show"],
+        "电视剧": ["tv", "series", "drama"],
+    }
+    tokens = [query]
+    for key, extra in expansions.items():
+        if key in query:
+            tokens.extend(extra)
+    if extra_terms:
+        for term, weight in extra_terms.items():
+            count = max(1, min(int(weight), 3))
+            for _ in range(count):
+                tokens.append(term)
+    seen = set()
+    deduped = []
+    for token in tokens:
+        if token in seen:
+            continue
+        seen.add(token)
+        deduped.append(token)
+    return " ".join(deduped)
+
+
+def _detect_query_languages(text: str) -> tuple[List[str], List[str]]:
+    if not text:
+        return [], []
+    lower = text.lower()
+    audio_langs: List[str] = []
+    subtitle_langs: List[str] = []
+
+    def add_lang(target: List[str], code: str) -> None:
+        if code not in target:
+            target.append(code)
+
+    lang_map = {
+        "zh": ["中文", "国语", "简体", "繁体", "chinese", "chs", "cht", "chi", "mandarin"],
+        "en": ["英文", "英语", "english", "eng"],
+        "jp": ["日语", "日文", "japanese", "jpn"],
+        "kr": ["韩语", "韩文", "korean", "kor"],
+        "fr": ["法语", "french", "fre"],
+        "de": ["德语", "german", "ger"],
+        "es": ["西语", "西班牙", "spanish", "spa"],
+        "ru": ["俄语", "russian", "rus"],
+    }
+    subtitle_keys = ["字幕", "中字", "双语", "sub", "subs", "subtitle"]
+    is_subtitle = any(k in lower for k in subtitle_keys)
+    for code, keys in lang_map.items():
+        if any(k.lower() in lower for k in keys):
+            if is_subtitle:
+                add_lang(subtitle_langs, code)
+            else:
+                add_lang(audio_langs, code)
+                add_lang(subtitle_langs, code)
+    return audio_langs, subtitle_langs
+
+
 @app.get("/health")
 def health() -> Dict[str, Any]:
     return {
@@ -66,27 +230,74 @@ def search(
     q: str = Query(..., description="query text"),
     topk: int = Query(20, ge=1, le=100),
     exclude_nsfw: bool = Query(True),
+    tmdb_only: bool = Query(False, description="only return items with tmdb_id"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
 ) -> Dict[str, Any]:
-    query_vec = embed_query(q)
-    results = vector_store.query(np.asarray([query_vec], dtype="float32"), topk=topk)
+    cleaned_query, filters = extract_query_filters(q)
+    tmdb_extra = {}
+    tmdb_cfg = cfg.tmdb or {}
+    if tmdb_cfg.get("query_expand", True) and cleaned_query:
+        tmdb_limit = int(tmdb_cfg.get("query_expand_limit", 20))
+        schema = (cfg.bitmagnet or {}).get("schema", "hermes")
+        tmdb_extra = pg_client.search_tmdb_expansions(schema, cleaned_query, limit=tmdb_limit)
+    expanded_query = expand_query(cleaned_query, tmdb_extra)
+    normalized_query = normalize_title_text(expanded_query)
+    final_query = normalized_query or expanded_query
+    if "bge" in str(cfg.embedding_model_version).lower():
+        final_query = f"为这个句子生成用于检索的向量: {final_query}"
+    query_vec = embed_query(final_query)
+    genre_filters = filters.get("genres", [])
+    fetch_k = min(100, max(topk, page * page_size))
+    metadata_filter = None
+    if tmdb_only or genre_filters or filters.get("file_type") or filters.get("audio_langs") or filters.get("subtitle_langs"):
+        metadata_filter = {
+            "has_tmdb": tmdb_only,
+            "genres": genre_filters,
+            "file_type": filters.get("file_type"),
+            "audio_langs": filters.get("audio_langs"),
+            "subtitle_langs": filters.get("subtitle_langs"),
+        }
+    results = vector_store.query(
+        np.asarray([query_vec], dtype="float32"),
+        topk=fetch_k,
+        metadata_filter=metadata_filter,
+    )
     filtered = []
     for r in results:
         if exclude_nsfw and r.get("nsfw"):
             continue
         filtered.append(r)
+    total = len(filtered)
+    start = (page - 1) * page_size
+    end = start + page_size
+    filtered = filtered[start:end]
     ids_by_source: Dict[str, List[str]] = {}
     for r in filtered:
-        ids_by_source.setdefault(r["source"], []).append(str(r["pg_id"]))
+        source = r.get("source")
+        pg_id = r.get("pg_id")
+        if not source or pg_id is None:
+            continue
+        ids_by_source.setdefault(source, []).append(str(pg_id))
     enriched: List[SearchResult] = []
     for source_name, ids in ids_by_source.items():
         source_cfg = source_map.get(source_name)
         if not source_cfg:
             continue
         rows = pg_client.fetch_by_ids(source_cfg, ids)
+        if source_cfg.get("pg", {}).get("keyword_search") and cleaned_query:
+            keyword_hits = pg_client.search_by_keyword(source_cfg, cleaned_query, limit=page_size * 3)
+            for hit in keyword_hits:
+                rows.setdefault(
+                    str(hit["pg_id"]),
+                    {source_cfg["pg"]["text_field"]: hit.get("title", "")},
+                )
         for r in filtered:
             if r["source"] != source_name:
                 continue
             pg_row = rows.get(str(r["pg_id"]), {})
+            if not pg_row:
+                continue
             title = pg_row.get(source_cfg["pg"]["text_field"], "")
             meta = {k: pg_row.get(k) for k in pg_row if k not in (source_cfg["pg"]["id_field"], source_cfg["pg"]["text_field"])}
             enriched.append(
@@ -101,4 +312,17 @@ def search(
                 )
             )
     enriched.sort(key=lambda x: x.score, reverse=True)
-    return {"count": len(enriched), "results": [e.model_dump() for e in enriched]}
+    return {
+        "count": len(enriched),
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "results": [e.model_dump() for e in enriched],
+    }
+
+
+@app.get("/torrent_files")
+def torrent_files(info_hash: str = Query(..., description="info_hash in \\x... text form")) -> Dict[str, Any]:
+    schema = (cfg.bitmagnet or {}).get("schema", "hermes")
+    rows = pg_client.fetch_torrent_files(schema, info_hash)
+    return {"count": len(rows), "files": [TorrentFile(**r).model_dump() for r in rows]}
