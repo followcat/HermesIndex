@@ -253,13 +253,17 @@ class PGClient:
         id_field = pg_cfg["id_field"]
         text_field = pg_cfg["text_field"]
         fields = pg_cfg.get("keyword_fields") or [text_field]
+        where_extra = pg_cfg.get("where")
         if not query:
             return []
         clauses = " OR ".join([f"{f} ILIKE %s" for f in fields])
+        where_sql = f"({clauses})"
+        if where_extra:
+            where_sql = f"{where_sql} AND ({where_extra})"
         sql_text = f"""
         SELECT {id_field}::text AS pg_id, {text_field} AS title
         FROM {table}
-        WHERE {clauses}
+        WHERE {where_sql}
         LIMIT %s
         """
         params = [f"%{query}%"] * len(fields) + [limit]

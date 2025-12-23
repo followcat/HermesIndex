@@ -285,9 +285,24 @@ def search(
         source_cfg = source_map.get(source_name)
         if not source_cfg:
             continue
-        rows = pg_client.fetch_by_ids(source_cfg, ids)
-        if source_cfg.get("pg", {}).get("keyword_search") and cleaned_query:
-            keyword_hits = pg_client.search_by_keyword(source_cfg, cleaned_query, limit=page_size * 3)
+        pg_cfg = source_cfg.get("pg", {})
+        tmdb_field = pg_cfg.get("tmdb_only_field", "tmdb_id")
+        fields = set([pg_cfg.get("id_field"), pg_cfg.get("text_field")] + pg_cfg.get("extra_fields", []))
+        rows_source_cfg = source_cfg
+        if tmdb_only and tmdb_field in fields:
+            rows_source_cfg = {
+                **source_cfg,
+                "pg": {
+                    **pg_cfg,
+                    "where": f"{tmdb_field} IS NOT NULL",
+                },
+            }
+        rows = pg_client.fetch_by_ids(rows_source_cfg, ids)
+        if pg_cfg.get("keyword_search") and cleaned_query:
+            if not tmdb_only or tmdb_field in fields:
+                keyword_hits = pg_client.search_by_keyword(rows_source_cfg, cleaned_query, limit=page_size * 3)
+            else:
+                keyword_hits = []
             for hit in keyword_hits:
                 rows.setdefault(
                     str(hit["pg_id"]),
