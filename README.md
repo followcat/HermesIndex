@@ -92,11 +92,13 @@ auth:
   admin_user: "admin"
   admin_password: "CHANGE_ME"
   user_store_path: "data/users.json"
+  token_store_path: "data/tokens.json"
   token_ttl_seconds: 86400
 ```
 
 说明：
 - `user_store_path` 保存轻量用户列表（JSON），不要提交到仓库。
+- `token_store_path` 保存登录 token（JSON），服务重启后仍可用。
 - 登录后使用 `Bearer` token 访问接口（前端已自动处理）。
 - 管理员可在右侧面板添加用户，新增账号即可登录。
 

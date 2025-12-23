@@ -45,6 +45,7 @@ auth:
   admin_user: "admin"
   admin_password: "CHANGE_ME"
   user_store_path: "data/users.json"
+  token_store_path: "data/tokens.json"
   token_ttl_seconds: 86400
 
 vector_store:
