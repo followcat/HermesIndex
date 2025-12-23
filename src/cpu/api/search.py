@@ -1,4 +1,6 @@
 import os
+import threading
+import time
 from datetime import datetime
 from typing import Any, Dict, List
 
@@ -138,6 +140,11 @@ class SyncStatusResponse(BaseModel):
     tmdb_enrichment_latest: datetime | None = None
     tmdb_enrichment_missing: int
     sources: List[SyncStatusSource]
+
+
+sync_status_lock = threading.Lock()
+sync_status_cache: Dict[str, Any] | None = None
+sync_status_updated_at: float | None = None
 
 
 def require_user(authorization: str | None = Header(default=None)) -> Dict[str, Any] | None:
@@ -582,6 +589,16 @@ def tmdb_detail(
 
 @app.get("/sync_status")
 def sync_status(_: Dict[str, Any] | None = Depends(require_user)) -> Dict[str, Any]:
+    with sync_status_lock:
+        if sync_status_cache is None:
+            return {"status": "pending"}
+        return {
+            **sync_status_cache,
+            "updated_at": sync_status_updated_at,
+        }
+
+
+def _compute_sync_status() -> Dict[str, Any]:
     schema = (cfg.bitmagnet or {}).get("schema", "hermes")
     sources = cfg.sources or []
     with pg_client.connect() as conn, conn.cursor() as cur:
@@ -667,6 +684,25 @@ def sync_status(_: Dict[str, Any] | None = Depends(require_user)) -> Dict[str, A
         sources=source_rows,
     )
     return response.model_dump()
+
+
+def _sync_status_worker(interval_seconds: int = 60) -> None:
+    global sync_status_cache, sync_status_updated_at
+    while True:
+        try:
+            data = _compute_sync_status()
+            with sync_status_lock:
+                sync_status_cache = data
+                sync_status_updated_at = time.time()
+        except Exception:
+            pass
+        time.sleep(interval_seconds)
+
+
+@app.on_event("startup")
+def _start_sync_status_worker() -> None:
+    thread = threading.Thread(target=_sync_status_worker, name="sync-status-worker", daemon=True)
+    thread.start()
 
 
 def _sanitize_value(value: Any) -> Any:
