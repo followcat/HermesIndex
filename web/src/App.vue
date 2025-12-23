@@ -246,6 +246,17 @@
         <h2>详情</h2>
         <p class="empty">选择一条结果查看详情与磁力下载。</p>
       </template>
+      <div v-if="isAuthenticated" class="password-panel">
+        <h3>修改密码</h3>
+        <div class="admin-actions">
+          <input v-model="pwdForm.old_password" type="password" placeholder="旧密码" />
+          <input v-model="pwdForm.new_password" type="password" placeholder="新密码" />
+          <button class="action-btn primary" @click="changePassword" :disabled="pwdLoading">
+            {{ pwdLoading ? "提交中..." : "更新密码" }}
+          </button>
+        </div>
+        <div v-if="pwdMessage" class="login-error">{{ pwdMessage }}</div>
+      </div>
       <div v-if="isAdmin" class="admin-panel">
         <h3>用户管理</h3>
         <div class="admin-actions">
@@ -342,6 +353,9 @@ const users = ref([]);
 const userLoading = ref(false);
 const userError = ref("");
 const newUser = ref({ username: "", password: "", role: "user" });
+const pwdForm = ref({ old_password: "", new_password: "" });
+const pwdLoading = ref(false);
+const pwdMessage = ref("");
 
 const emptyMessage = computed(() => {
   if (loading.value) return "搜索中...";
@@ -499,6 +513,30 @@ function logout() {
   if (statusTimer) {
     window.clearInterval(statusTimer);
     statusTimer = null;
+  }
+}
+
+async function changePassword() {
+  if (!pwdForm.value.old_password || !pwdForm.value.new_password) {
+    pwdMessage.value = "请输入旧密码和新密码";
+    return;
+  }
+  pwdLoading.value = true;
+  pwdMessage.value = "";
+  try {
+    const resp = await apiFetch(`${apiBase}/auth/password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(pwdForm.value),
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    pwdForm.value = { old_password: "", new_password: "" };
+    pwdMessage.value = "密码已更新";
+  } catch (err) {
+    console.error(err);
+    pwdMessage.value = "修改失败";
+  } finally {
+    pwdLoading.value = false;
   }
 }
 

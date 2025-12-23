@@ -411,6 +411,21 @@ input {
   gap: 10px;
 }
 
+.password-panel {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: #111111;
+  display: grid;
+  gap: 10px;
+}
+
+.password-panel h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
 .admin-panel h3 {
   margin: 0;
   font-size: 15px;
