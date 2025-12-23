@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 from typing import Any, Dict, List
 
 import numpy as np
@@ -42,7 +43,7 @@ class TorrentFile(BaseModel):
     path: str
     extension: str | None = None
     size: int | None = None
-    updated_at: str | None = None
+    updated_at: datetime | None = None
 
 
 def embed_query(text: str) -> np.ndarray:

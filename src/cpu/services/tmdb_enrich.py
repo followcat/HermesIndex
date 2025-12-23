@@ -223,7 +223,7 @@ def ensure_tmdb_enrichment(
             time.sleep(sleep_seconds)
 
 
-def run_enrich(config_path: str, limit: int, force: bool) -> None:
+def run_enrich(config_path: str, limit: int, force: bool, loop: bool) -> None:
     cfg = load_config(config_path)
     tmdb_cfg = cfg.tmdb or {}
     if not tmdb_cfg.get("enabled"):
@@ -242,21 +242,24 @@ def run_enrich(config_path: str, limit: int, force: bool) -> None:
     timeout = float(tmdb_cfg.get("timeout_seconds", 10))
 
     with connect(dsn) as conn:
-        refs = fetch_tmdb_refs(conn, schema, limit=limit, force=force)
-        if not refs:
-            logger.info("No tmdb ids to enrich")
-            return
-        logger.info("Enriching tmdb refs: %d", len(refs))
         with httpx.Client(timeout=timeout) as client:
-            for content_type, tmdb_id in refs:
-                try:
-                    payload = fetch_tmdb_payload(client, base_url, api_key, content_type, tmdb_id, language)
-                    values = normalize_tmdb_payload(payload, limits)
-                    upsert_tmdb(conn, schema, content_type, tmdb_id, values, payload)
-                    logger.info("Enriched tmdb %s:%s", content_type, tmdb_id)
-                except Exception as exc:
-                    logger.warning("Failed tmdb %s:%s error=%s", content_type, tmdb_id, exc)
-                time.sleep(sleep_seconds)
+            while True:
+                refs = fetch_tmdb_refs(conn, schema, limit=limit, force=force)
+                if not refs:
+                    logger.info("No tmdb ids to enrich")
+                    return
+                logger.info("Enriching tmdb refs: %d", len(refs))
+                for content_type, tmdb_id in refs:
+                    try:
+                        payload = fetch_tmdb_payload(client, base_url, api_key, content_type, tmdb_id, language)
+                        values = normalize_tmdb_payload(payload, limits)
+                        upsert_tmdb(conn, schema, content_type, tmdb_id, values, payload)
+                        logger.info("Enriched tmdb %s:%s", content_type, tmdb_id)
+                    except Exception as exc:
+                        logger.warning("Failed tmdb %s:%s error=%s", content_type, tmdb_id, exc)
+                    time.sleep(sleep_seconds)
+                if not loop:
+                    return
 
 
 def main() -> None:
@@ -264,8 +267,13 @@ def main() -> None:
     parser.add_argument("--config", default="configs/example.yaml")
     parser.add_argument("--limit", type=int, default=500)
     parser.add_argument("--force", action="store_true", help="re-fetch even if cached")
+    parser.add_argument(
+        "--loop",
+        action="store_true",
+        help="keep running until no missing TMDB ids",
+    )
     args = parser.parse_args()
-    run_enrich(args.config, args.limit, args.force)
+    run_enrich(args.config, args.limit, args.force, args.loop)
 
 
 if __name__ == "__main__":
