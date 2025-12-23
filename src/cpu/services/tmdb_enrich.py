@@ -103,6 +103,8 @@ def normalize_tmdb_payload(payload: Dict[str, Any], limits: Dict[str, int]) -> D
         "directors": directors,
         "plot": payload.get("overview") or "",
         "genre": genres,
+        "poster_path": payload.get("poster_path"),
+        "backdrop_path": payload.get("backdrop_path"),
     }
 
 

@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Any, Dict, List
 
 import numpy as np
+import httpx
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 
@@ -12,6 +13,7 @@ from cpu.core.utils import normalize_title_text
 from cpu.clients.gpu_client import GPUClient
 from cpu.repositories.pg import PGClient
 from cpu.repositories.vector_store import create_vector_store
+from cpu.services import tmdb_enrich
 
 CONFIG_PATH = os.getenv("CONFIG_PATH", "configs/example.yaml")
 
@@ -67,6 +69,8 @@ class TmdbDetail(BaseModel):
     directors: str | None = None
     plot: str | None = None
     genre: str | None = None
+    poster_url: str | None = None
+    backdrop_url: str | None = None
     updated_at: datetime | None = None
 
 
@@ -383,5 +387,36 @@ def tmdb_detail(
     schema = (cfg.bitmagnet or {}).get("schema", "hermes")
     row = pg_client.fetch_tmdb_detail(schema, content_type, tmdb_id)
     if not row:
+        tmdb_cfg = cfg.tmdb or {}
+        if tmdb_cfg.get("enabled"):
+            try:
+                api_key = tmdb_enrich.load_tmdb_key(tmdb_cfg)
+                base_url = tmdb_cfg.get("base_url", tmdb_enrich.DEFAULT_BASE_URL)
+                language = tmdb_cfg.get("language", tmdb_enrich.DEFAULT_LANGUAGE)
+                limits = tmdb_cfg.get("limits", {"actors": 10, "directors": 5, "aka": 10})
+                timeout = float(tmdb_cfg.get("timeout_seconds", 10))
+                with httpx.Client(timeout=timeout) as client:
+                    payload = tmdb_enrich.fetch_tmdb_payload(
+                        client,
+                        base_url,
+                        api_key,
+                        content_type,
+                        tmdb_id,
+                        language,
+                    )
+                    values = tmdb_enrich.normalize_tmdb_payload(payload, limits)
+                with tmdb_enrich.connect(cfg.postgres["dsn"]) as conn:
+                    tmdb_enrich.upsert_tmdb(conn, schema, content_type, tmdb_id, values, payload)
+                row = pg_client.fetch_tmdb_detail(schema, content_type, tmdb_id)
+            except Exception:
+                row = None
+    if not row:
         return {"detail": None}
+    raw = row.get("raw") or {}
+    base = "https://image.tmdb.org/t/p/w500"
+    poster_path = raw.get("poster_path")
+    backdrop_path = raw.get("backdrop_path")
+    row["poster_url"] = f"{base}{poster_path}" if poster_path else None
+    row["backdrop_url"] = f"{base}{backdrop_path}" if backdrop_path else None
+    row.pop("raw", None)
     return {"detail": TmdbDetail(**row).model_dump()}

@@ -333,7 +333,7 @@ class PGClient:
                 te.genre,
                 te.keywords
             FROM public.content c
-            LEFT JOIN {schema}.tmdb_enrichment te
+            JOIN {schema}.tmdb_enrichment te
                 ON te.content_type = c.type
                 AND te.tmdb_id = c.id
             WHERE c.source = 'tmdb'
@@ -361,14 +361,36 @@ class PGClient:
                    directors,
                    plot,
                    genre,
+                   raw,
                    updated_at
             FROM {schema}.tmdb_enrichment
             WHERE content_type = %s AND tmdb_id = %s
             """
         ).format(schema=sql.Identifier(schema))
+        fallback_sql = sql.SQL(
+            """
+            SELECT content_type,
+                   tmdb_id,
+                   aka,
+                   keywords,
+                   actors,
+                   directors,
+                   plot,
+                   genre,
+                   raw,
+                   updated_at
+            FROM {schema}.tmdb_enrichment
+            WHERE tmdb_id = %s
+            ORDER BY updated_at DESC NULLS LAST
+            LIMIT 1
+            """
+        ).format(schema=sql.Identifier(schema))
         with self.connect() as conn, conn.cursor() as cur:
             cur.execute(sql_text, (content_type, tmdb_id))
             row = cur.fetchone()
+            if not row:
+                cur.execute(fallback_sql, (tmdb_id,))
+                row = cur.fetchone()
             return row
 
     @staticmethod
