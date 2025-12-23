@@ -75,7 +75,9 @@ def create_content_view(conn: psycopg.Connection, schema: str) -> None:
             c.adult,
             c.release_year,
             c.updated_at,
-            CASE WHEN c.source = 'tmdb' THEN c.id ELSE NULL END AS tmdb_id
+            CASE WHEN c.source = 'tmdb' THEN c.id ELSE NULL END AS tmdb_id,
+            te.genre AS genre,
+            te.keywords AS keywords
             ,
             trim(both ' ' from concat_ws(' ',
                 c.title,
@@ -114,6 +116,8 @@ def create_content_view(conn: psycopg.Connection, schema: str) -> None:
             c.adult,
             c.release_year,
             c.updated_at,
+            te.genre,
+            te.keywords,
             te.aka,
             te.keywords,
             te.actors,

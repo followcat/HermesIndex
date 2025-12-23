@@ -26,6 +26,9 @@ TMDB_TYPES = {
 
 
 def load_tmdb_key(cfg: Dict[str, Any]) -> str:
+    direct_key = cfg.get("api_key")
+    if direct_key:
+        return str(direct_key)
     env_name = cfg.get("api_key_env", "TMDB_API_KEY")
     key = os.getenv(env_name)
     if not key:

@@ -28,6 +28,7 @@ bitmagnet:
 
 tmdb:
   enabled: false
+  # api_key: "REPLACE_TMDB_KEY"
   api_key_env: "TMDB_API_KEY"
   base_url: "https://api.themoviedb.org/3"
   language: "zh-CN"
@@ -35,16 +36,15 @@ tmdb:
   timeout_seconds: 10
   auto_enrich: false
   max_per_batch: 50
+  query_expand: true
+  query_expand_limit: 20
 
 vector_store:
-  type: "hnsw"
-  path: "./data/bitmagnet_index"
-  max_elements: 1500000
-  dim: 768
+  type: "qdrant"
+  url: "http://127.0.0.1:6333"
+  collection: "bitmagnet_vectors"
+  dim: 1024
   metric: "cosine"
-  ef_construction: 200
-  M: 16
-  ef_search: 64
 
 sync:
   batch_size: 256
@@ -100,8 +100,10 @@ sources:
   #     id_field: "content_uid"
   #     text_field: "search_text"
   #     updated_at_field: "updated_at"
-  #     extra_fields: ["title", "original_title", "overview", "type", "source", "id", "adult", "release_year", "tmdb_id"]
+  #     extra_fields: ["title", "original_title", "overview", "type", "source", "id", "adult", "release_year", "tmdb_id", "genre", "keywords"]
   #     tmdb_enrich: true
+  #     keyword_search: true
+  #     keyword_fields: ["title", "original_title", "overview"]
   #   vector_index:
   #     index_name: "content_title_v1"
   #     dim: 768

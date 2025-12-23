@@ -24,6 +24,7 @@ bitmagnet:
 # TMDB enrichment (optional, uses API key from env)
 tmdb:
   enabled: false
+  # api_key: "REPLACE_TMDB_KEY"
   api_key_env: "TMDB_API_KEY"
   base_url: "https://api.themoviedb.org/3"
   language: "zh-CN"
@@ -31,6 +32,8 @@ tmdb:
   timeout_seconds: 10
   auto_enrich: false
   max_per_batch: 50
+  query_expand: true
+  query_expand_limit: 20
   # limits:
   #   actors: 10
   #   directors: 5
