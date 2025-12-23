@@ -260,8 +260,8 @@ def search(
     topk: int = Query(20, ge=1, le=100),
     exclude_nsfw: bool = Query(True),
     tmdb_only: bool = Query(False, description="only return items with tmdb_id"),
-    page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    cursor: int = Query(0, ge=0, description="cursor offset for pagination"),
 ) -> Dict[str, Any]:
     cleaned_query, filters = extract_query_filters(q)
     tmdb_extra = {}
@@ -277,7 +277,7 @@ def search(
         final_query = f"为这个句子生成用于检索的向量: {final_query}"
     query_vec = embed_query(final_query)
     genre_filters = filters.get("genres", [])
-    fetch_k = min(100, max(topk, page * page_size))
+    fetch_k = min(100, max(topk, page_size))
     metadata_filter = None
     if tmdb_only or genre_filters or filters.get("file_type") or filters.get("audio_langs") or filters.get("subtitle_langs"):
         metadata_filter = {
@@ -291,16 +291,15 @@ def search(
         np.asarray([query_vec], dtype="float32"),
         topk=fetch_k,
         metadata_filter=metadata_filter,
+        offset=cursor,
     )
+    raw_count = len(results)
     filtered = []
     for r in results:
         if exclude_nsfw and r.get("nsfw"):
             continue
         filtered.append(r)
-    total = len(filtered)
-    start = (page - 1) * page_size
-    end = start + page_size
-    filtered = filtered[start:end]
+    next_cursor = cursor + raw_count if raw_count == fetch_k else None
     ids_by_source: Dict[str, List[str]] = {}
     for r in filtered:
         source = r.get("source")
@@ -343,7 +342,11 @@ def search(
             if not pg_row:
                 continue
             title = pg_row.get(source_cfg["pg"]["text_field"], "")
-            meta = {k: pg_row.get(k) for k in pg_row if k not in (source_cfg["pg"]["id_field"], source_cfg["pg"]["text_field"])}
+            meta = {}
+            for k, v in pg_row.items():
+                if k in (source_cfg["pg"]["id_field"], source_cfg["pg"]["text_field"]):
+                    continue
+                meta[k] = _sanitize_value(v)
             enriched.append(
                 SearchResult(
                     score=float(r["score"]),
@@ -358,8 +361,7 @@ def search(
     enriched.sort(key=lambda x: x.score, reverse=True)
     return {
         "count": len(enriched),
-        "total": total,
-        "page": page,
+        "next_cursor": next_cursor,
         "page_size": page_size,
         "results": [e.model_dump() for e in enriched],
     }
@@ -420,3 +422,14 @@ def tmdb_detail(
     row["backdrop_url"] = f"{base}{backdrop_path}" if backdrop_path else None
     row.pop("raw", None)
     return {"detail": TmdbDetail(**row).model_dump()}
+
+
+def _sanitize_value(value: Any) -> Any:
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        data = bytes(value)
+        return f"\\x{data.hex()}"
+    if isinstance(value, list):
+        return [_sanitize_value(item) for item in value]
+    if isinstance(value, dict):
+        return {k: _sanitize_value(v) for k, v in value.items()}
+    return value

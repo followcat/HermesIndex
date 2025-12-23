@@ -15,7 +15,11 @@ class BaseVectorStore:
         raise NotImplementedError
 
     def query(
-        self, embedding: np.ndarray, topk: int = 20, metadata_filter: Dict[str, Any] | None = None
+        self,
+        embedding: np.ndarray,
+        topk: int = 20,
+        metadata_filter: Dict[str, Any] | None = None,
+        offset: int = 0,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError
 
@@ -113,14 +117,19 @@ class HNSWVectorStore(BaseVectorStore):
         return labels
 
     def query(
-        self, embedding: np.ndarray, topk: int = 20, metadata_filter: Dict[str, Any] | None = None
+        self,
+        embedding: np.ndarray,
+        topk: int = 20,
+        metadata_filter: Dict[str, Any] | None = None,
+        offset: int = 0,
     ) -> List[Dict[str, Any]]:
         if not self.meta:
             return []
-        k = min(topk, len(self.meta))
+        k = min(topk + max(offset, 0), len(self.meta))
         labels, distances = self.index.knn_query(embedding, k=k)
         results: List[Dict[str, Any]] = []
-        for label, distance in zip(labels[0], distances[0]):
+        sliced = list(zip(labels[0], distances[0]))[offset : offset + topk]
+        for label, distance in sliced:
             meta = self.meta.get(int(label))
             if not meta:
                 continue
@@ -172,7 +181,11 @@ class QdrantVectorStore(BaseVectorStore):
         return [str(p.id) for p in points]
 
     def query(
-        self, embedding: np.ndarray, topk: int = 20, metadata_filter: Dict[str, Any] | None = None
+        self,
+        embedding: np.ndarray,
+        topk: int = 20,
+        metadata_filter: Dict[str, Any] | None = None,
+        offset: int = 0,
     ) -> List[Dict[str, Any]]:
         query_filter = None
         if metadata_filter and (metadata_filter.get("has_tmdb") or metadata_filter.get("genres")):
@@ -216,6 +229,7 @@ class QdrantVectorStore(BaseVectorStore):
                 limit=topk,
                 with_payload=True,
                 query_filter=query_filter,
+                offset=offset,
             )
         elif hasattr(self.client, "search_points"):
             hits = self.client.search_points(
@@ -224,6 +238,7 @@ class QdrantVectorStore(BaseVectorStore):
                 limit=topk,
                 with_payload=True,
                 query_filter=query_filter,
+                offset=offset,
             )
         else:
             import httpx
@@ -263,6 +278,7 @@ class QdrantVectorStore(BaseVectorStore):
                     "limit": topk,
                     "with_payload": True,
                     "filter": filter_payload,
+                    "offset": offset,
                 },
                 timeout=30,
             )
@@ -332,7 +348,11 @@ class MilvusVectorStore(BaseVectorStore):
         return ids
 
     def query(
-        self, embedding: np.ndarray, topk: int = 20, metadata_filter: Dict[str, Any] | None = None
+        self,
+        embedding: np.ndarray,
+        topk: int = 20,
+        metadata_filter: Dict[str, Any] | None = None,
+        offset: int = 0,
     ) -> List[Dict[str, Any]]:
         expr = ""
         search_params = {"metric_type": "IP" if self.metric == "dot" else "COSINE"}
@@ -340,12 +360,12 @@ class MilvusVectorStore(BaseVectorStore):
             data=embedding.tolist(),
             anns_field="vector",
             param=search_params,
-            limit=topk,
+            limit=topk + max(offset, 0),
             expr=expr,
             output_fields=["payload"],
         )
         results: List[Dict[str, Any]] = []
-        for hit in res[0]:
+        for hit in res[0][offset : offset + topk]:
             payload = dict(hit.entity.get("payload") or {})
             payload["score"] = float(hit.score)
             results.append(payload)

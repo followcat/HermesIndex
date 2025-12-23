@@ -32,14 +32,14 @@
           {{ emptyMessage }}
         </div>
         <div v-if="filteredResults.length" class="pager">
-          <button class="action-btn" @click="prevPage" :disabled="page === 1 || loading">
+          <button class="action-btn" @click="prevPage" :disabled="!cursorStack.length || loading">
             上一页
           </button>
-          <span>第 {{ page }} / {{ totalPages }} 页</span>
+          <span>第 {{ currentPage }} 页</span>
           <button
             class="action-btn"
             @click="nextPage"
-            :disabled="page >= totalPages || loading"
+            :disabled="!nextCursor || loading"
           >
             下一页
           </button>
@@ -242,8 +242,9 @@ import { computed, onMounted, ref } from "vue";
 const apiBase = import.meta.env.VITE_API_BASE || "/api";
 const query = ref("");
 const pageSize = ref(20);
-const page = ref(1);
-const total = ref(0);
+const cursor = ref(0);
+const nextCursor = ref(null);
+const cursorStack = ref([]);
 const excludeNsfw = ref(true);
 const tmdbOnly = ref(false);
 const loading = ref(false);
@@ -263,10 +264,7 @@ const emptyMessage = computed(() => {
   return "没有找到结果";
 });
 
-const totalPages = computed(() => {
-  if (!total.value) return 1;
-  return Math.max(1, Math.ceil(total.value / pageSize.value));
-});
+const currentPage = computed(() => cursorStack.value.length + 1);
 
 const filteredResults = computed(() => results.value);
 
@@ -324,7 +322,9 @@ function prettySize(size) {
 async function runSearch(resetPage = false) {
   if (!query.value.trim()) return;
   if (resetPage) {
-    page.value = 1;
+    cursor.value = 0;
+    nextCursor.value = null;
+    cursorStack.value = [];
   }
   loading.value = true;
   try {
@@ -333,14 +333,14 @@ async function runSearch(resetPage = false) {
       topk: String(pageSize.value),
       exclude_nsfw: String(excludeNsfw.value),
       tmdb_only: String(tmdbOnly.value),
-      page: String(page.value),
       page_size: String(pageSize.value),
+      cursor: String(cursor.value || 0),
     });
     const resp = await fetch(`${apiBase}/search?${params.toString()}`);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
     results.value = data.results || [];
-    total.value = data.total || results.value.length;
+    nextCursor.value = data.next_cursor ?? null;
     if (filteredResults.value.length) {
       selected.value = filteredResults.value[0];
     }
@@ -451,14 +451,16 @@ onMounted(() => {
   fetchLatestTmdb();
 });
 function prevPage() {
-  if (page.value <= 1) return;
-  page.value -= 1;
+  if (!cursorStack.value.length) return;
+  cursor.value = cursorStack.value.pop();
+  nextCursor.value = null;
   runSearch();
 }
 
 function nextPage() {
-  if (page.value >= totalPages.value) return;
-  page.value += 1;
+  if (!nextCursor.value) return;
+  cursorStack.value.push(cursor.value);
+  cursor.value = nextCursor.value;
   runSearch();
 }
 
