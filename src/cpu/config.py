@@ -17,6 +17,7 @@ class Config:
     celery: Dict[str, Any] = field(default_factory=dict)
     bitmagnet: Dict[str, Any] = field(default_factory=dict)
     tmdb: Dict[str, Any] = field(default_factory=dict)
+    auth: Dict[str, Any] = field(default_factory=dict)
 
 
 def load_config(path: str) -> Config:
@@ -34,6 +35,7 @@ def load_config(path: str) -> Config:
         celery=raw.get("celery", {}),
         bitmagnet=raw.get("bitmagnet", {}),
         tmdb=raw.get("tmdb", {}),
+        auth=raw.get("auth", {}),
     )
 
 

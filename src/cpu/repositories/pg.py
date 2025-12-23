@@ -213,20 +213,19 @@ class PGClient:
                     )
 
         where_extra = pg_cfg.get("where")
-        base_query = sql.SQL(
-            "SELECT {selects} FROM {table} AS t {joins} WHERE t.{id_field}::text IN ({placeholders})"
+        base_sql = (
+            "SELECT {selects} FROM {table} AS t {joins} "
+            "WHERE t.{id_field}::text IN ({placeholders})"
         )
         if where_extra:
-            base_query = sql.SQL("{base} AND ({where})").format(
-                base=base_query,
-                where=sql.SQL(str(where_extra)),
-            )
-        query = base_query.format(
+            base_sql += " AND ({where})"
+        query = sql.SQL(base_sql).format(
             selects=sql.SQL(", ").join(select_cols),
             table=self._table_identifier(table),
             joins=sql.SQL(" ").join(join_clauses) if join_clauses else sql.SQL(""),
             id_field=sql.Identifier(id_field),
             placeholders=placeholders,
+            where=sql.SQL(str(where_extra)) if where_extra else sql.SQL("TRUE"),
         )
         if has_agg:
             query = sql.SQL("{base} GROUP BY {group_by}").format(

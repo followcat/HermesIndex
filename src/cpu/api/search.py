@@ -4,7 +4,7 @@ from typing import Any, Dict, List
 
 import numpy as np
 import httpx
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Header, Query
 from pydantic import BaseModel
 
 from cpu.config import load_config
@@ -14,6 +14,7 @@ from cpu.clients.gpu_client import GPUClient
 from cpu.repositories.pg import PGClient
 from cpu.repositories.vector_store import create_vector_store
 from cpu.services import tmdb_enrich
+from cpu.services.auth_store import AuthStore
 
 CONFIG_PATH = os.getenv("CONFIG_PATH", "configs/example.yaml")
 
@@ -28,6 +29,17 @@ if cfg.local_embedder.get("enabled"):
 source_map: Dict[str, Dict[str, Any]] = {s["name"]: s for s in cfg.sources}
 
 app = FastAPI(title="HermesIndex Search API")
+auth_cfg = cfg.auth or {}
+auth_enabled = bool(auth_cfg.get("enabled", False))
+auth_store = None
+if auth_enabled:
+    admin_user = auth_cfg.get("admin_user", "")
+    admin_password = auth_cfg.get("admin_password", "")
+    if not admin_user or not admin_password:
+        raise ValueError("auth.enabled=true requires auth.admin_user and auth.admin_password")
+    user_store_path = auth_cfg.get("user_store_path", "data/users.json")
+    token_ttl = int(auth_cfg.get("token_ttl_seconds", 86400))
+    auth_store = AuthStore(user_store_path, admin_user, admin_password, token_ttl=token_ttl)
 
 
 class SearchResult(BaseModel):
@@ -72,6 +84,74 @@ class TmdbDetail(BaseModel):
     poster_url: str | None = None
     backdrop_url: str | None = None
     updated_at: datetime | None = None
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class LoginResponse(BaseModel):
+    token: str
+    username: str
+    role: str
+
+
+class UserSummary(BaseModel):
+    username: str
+    role: str
+
+
+class CreateUserRequest(BaseModel):
+    username: str
+    password: str
+    role: str = "user"
+
+
+class SyncStatusSource(BaseModel):
+    name: str
+    table: str
+    total_rows: int
+    synced_rows: int
+    max_updated_at: datetime | None = None
+    last_sync_updated_at: datetime | None = None
+    max_synced_updated_at: datetime | None = None
+    errors: int
+
+
+class SyncStatusResponse(BaseModel):
+    tmdb_content_total: int
+    tmdb_content_latest: datetime | None = None
+    tmdb_enrichment_total: int
+    tmdb_enrichment_latest: datetime | None = None
+    tmdb_enrichment_missing: int
+    sources: List[SyncStatusSource]
+
+
+def require_user(authorization: str | None = Header(default=None)) -> Dict[str, Any] | None:
+    if not auth_enabled:
+        return None
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Missing Authorization header")
+    parts = authorization.split(" ", 1)
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        raise HTTPException(status_code=401, detail="Invalid Authorization header")
+    token = parts[1].strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    assert auth_store is not None
+    user = auth_store.verify_token(token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    return user
+
+
+def require_admin(user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any] | None:
+    if not auth_enabled:
+        return None
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin required")
+    return user
 
 
 def embed_query(text: str) -> np.ndarray:
@@ -254,6 +334,48 @@ def health() -> Dict[str, Any]:
     }
 
 
+@app.post("/auth/login")
+def login(req: LoginRequest) -> Dict[str, Any]:
+    if not auth_enabled:
+        raise HTTPException(status_code=400, detail="Auth disabled")
+    assert auth_store is not None
+    user = auth_store.login(req.username, req.password)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    token = auth_store.issue_token(user["username"], user["role"])
+    return LoginResponse(token=token, username=user["username"], role=user["role"]).model_dump()
+
+
+@app.get("/auth/me")
+def me(user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
+    if not auth_enabled:
+        return {"username": "anonymous", "role": "guest"}
+    return {"username": user["username"], "role": user["role"]}
+
+
+@app.get("/auth/users")
+def list_users(_: Dict[str, Any] = Depends(require_admin)) -> Dict[str, Any]:
+    assert auth_store is not None
+    users = auth_store.list_users()
+    return {"users": [UserSummary(**u).model_dump() for u in users]}
+
+
+@app.post("/auth/users")
+def create_user(req: CreateUserRequest, _: Dict[str, Any] = Depends(require_admin)) -> Dict[str, Any]:
+    assert auth_store is not None
+    auth_store.add_user(req.username, req.password, role=req.role)
+    return {"status": "ok"}
+
+
+@app.delete("/auth/users/{username}")
+def delete_user(username: str, _: Dict[str, Any] = Depends(require_admin)) -> Dict[str, Any]:
+    assert auth_store is not None
+    if username == auth_store.admin_user:
+        raise HTTPException(status_code=400, detail="Cannot delete admin user")
+    auth_store.delete_user(username)
+    return {"status": "ok"}
+
+
 @app.get("/search")
 def search(
     q: str = Query(..., description="query text"),
@@ -262,6 +384,7 @@ def search(
     tmdb_only: bool = Query(False, description="only return items with tmdb_id"),
     page_size: int = Query(20, ge=1, le=100),
     cursor: int = Query(0, ge=0, description="cursor offset for pagination"),
+    _: Dict[str, Any] | None = Depends(require_user),
 ) -> Dict[str, Any]:
     cleaned_query, filters = extract_query_filters(q)
     tmdb_extra = {}
@@ -368,14 +491,17 @@ def search(
 
 
 @app.get("/torrent_files")
-def torrent_files(info_hash: str = Query(..., description="info_hash in \\x... text form")) -> Dict[str, Any]:
+def torrent_files(
+    info_hash: str = Query(..., description="info_hash in \\x... text form"),
+    _: Dict[str, Any] | None = Depends(require_user),
+) -> Dict[str, Any]:
     schema = (cfg.bitmagnet or {}).get("schema", "hermes")
     rows = pg_client.fetch_torrent_files(schema, info_hash)
     return {"count": len(rows), "files": [TorrentFile(**r).model_dump() for r in rows]}
 
 
 @app.get("/tmdb_latest")
-def tmdb_latest(limit: int = Query(50, ge=1, le=100)) -> Dict[str, Any]:
+def tmdb_latest(limit: int = Query(50, ge=1, le=100), _: Dict[str, Any] | None = Depends(require_user)) -> Dict[str, Any]:
     schema = (cfg.bitmagnet or {}).get("schema", "hermes")
     rows = pg_client.fetch_latest_tmdb(schema, limit=limit)
     return {"count": len(rows), "results": [LatestTmdbItem(**r).model_dump() for r in rows]}
@@ -385,6 +511,7 @@ def tmdb_latest(limit: int = Query(50, ge=1, le=100)) -> Dict[str, Any]:
 def tmdb_detail(
     tmdb_id: str = Query(...),
     content_type: str = Query("movie"),
+    _: Dict[str, Any] | None = Depends(require_user),
 ) -> Dict[str, Any]:
     schema = (cfg.bitmagnet or {}).get("schema", "hermes")
     row = pg_client.fetch_tmdb_detail(schema, content_type, tmdb_id)
@@ -422,6 +549,95 @@ def tmdb_detail(
     row["backdrop_url"] = f"{base}{backdrop_path}" if backdrop_path else None
     row.pop("raw", None)
     return {"detail": TmdbDetail(**row).model_dump()}
+
+
+@app.get("/sync_status")
+def sync_status(_: Dict[str, Any] | None = Depends(require_user)) -> Dict[str, Any]:
+    schema = (cfg.bitmagnet or {}).get("schema", "hermes")
+    sources = cfg.sources or []
+    with pg_client.connect() as conn, conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM public.content WHERE source = 'tmdb'")
+        tmdb_content_total = int(cur.fetchone()[0])
+        cur.execute("SELECT max(updated_at) FROM public.content WHERE source = 'tmdb'")
+        tmdb_content_latest = cur.fetchone()[0]
+
+        cur.execute("SELECT count(*) FROM {schema}.tmdb_enrichment".format(schema=schema))
+        tmdb_enrichment_total = int(cur.fetchone()[0])
+        cur.execute("SELECT max(updated_at) FROM {schema}.tmdb_enrichment".format(schema=schema))
+        tmdb_enrichment_latest = cur.fetchone()[0]
+        cur.execute(
+            """
+            SELECT count(*)
+            FROM {schema}.tmdb_enrichment
+            WHERE (aka IS NULL OR aka = '')
+              AND (keywords IS NULL OR keywords = '')
+            """.format(schema=schema)
+        )
+        tmdb_enrichment_missing = int(cur.fetchone()[0])
+
+        source_rows: List[SyncStatusSource] = []
+        for source in sources:
+            name = source.get("name", "")
+            pg_cfg = source.get("pg", {})
+            table = pg_cfg.get("table")
+            id_field = pg_cfg.get("id_field")
+            updated_at_field = pg_cfg.get("updated_at_field")
+            if not table or not id_field:
+                continue
+            cur.execute(f"SELECT count(*) FROM {table}")
+            total = int(cur.fetchone()[0])
+            cur.execute(
+                f"SELECT count(*) FROM {schema}.sync_state WHERE source = %s",
+                (name,),
+            )
+            synced = int(cur.fetchone()[0])
+            max_src = None
+            max_sync = None
+            max_synced_src = None
+            if updated_at_field:
+                cur.execute(f"SELECT max({updated_at_field}) FROM {table}")
+                max_src = cur.fetchone()[0]
+                cur.execute(
+                    f"SELECT max(updated_at) FROM {schema}.sync_state WHERE source = %s",
+                    (name,),
+                )
+                max_sync = cur.fetchone()[0]
+                cur.execute(
+                    f"""
+                    SELECT max(t.{updated_at_field})
+                    FROM {table} t
+                    JOIN {schema}.sync_state s
+                      ON s.source = %s AND s.pg_id = t.{id_field}::text
+                    """,
+                    (name,),
+                )
+                max_synced_src = cur.fetchone()[0]
+            cur.execute(
+                f"SELECT count(*) FROM {schema}.sync_state WHERE source = %s AND last_error IS NOT NULL",
+                (name,),
+            )
+            errors = int(cur.fetchone()[0])
+            source_rows.append(
+                SyncStatusSource(
+                    name=name,
+                    table=table,
+                    total_rows=total,
+                    synced_rows=synced,
+                    max_updated_at=max_src,
+                    last_sync_updated_at=max_sync,
+                    max_synced_updated_at=max_synced_src,
+                    errors=errors,
+                )
+            )
+    response = SyncStatusResponse(
+        tmdb_content_total=tmdb_content_total,
+        tmdb_content_latest=tmdb_content_latest,
+        tmdb_enrichment_total=tmdb_enrichment_total,
+        tmdb_enrichment_latest=tmdb_enrichment_latest,
+        tmdb_enrichment_missing=tmdb_enrichment_missing,
+        sources=source_rows,
+    )
+    return response.model_dump()
 
 
 def _sanitize_value(value: Any) -> Any:
