@@ -115,6 +115,11 @@ class CreateUserRequest(BaseModel):
     role: str = "user"
 
 
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str
+
+
 class SyncStatusSource(BaseModel):
     name: str
     table: str
@@ -383,6 +388,23 @@ def delete_user(username: str, _: Dict[str, Any] = Depends(require_admin)) -> Di
     return {"status": "ok"}
 
 
+@app.post("/auth/password")
+def change_password(
+    req: ChangePasswordRequest,
+    user: Dict[str, Any] = Depends(require_user),
+) -> Dict[str, Any]:
+    if not auth_enabled:
+        raise HTTPException(status_code=400, detail="Auth disabled")
+    assert auth_store is not None
+    if user["username"] == auth_store.admin_user:
+        raise HTTPException(status_code=400, detail="Admin password is managed in config")
+    try:
+        auth_store.update_password(user["username"], req.old_password, req.new_password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "ok"}
+
+
 @app.get("/search")
 def search(
     q: str = Query(..., description="query text"),
@@ -563,24 +585,24 @@ def sync_status(_: Dict[str, Any] | None = Depends(require_user)) -> Dict[str, A
     schema = (cfg.bitmagnet or {}).get("schema", "hermes")
     sources = cfg.sources or []
     with pg_client.connect() as conn, conn.cursor() as cur:
-        cur.execute("SELECT count(*) FROM public.content WHERE source = 'tmdb'")
-        tmdb_content_total = int(cur.fetchone()[0])
-        cur.execute("SELECT max(updated_at) FROM public.content WHERE source = 'tmdb'")
-        tmdb_content_latest = cur.fetchone()[0]
+        cur.execute("SELECT count(*) AS total FROM public.content WHERE source = 'tmdb'")
+        tmdb_content_total = int(cur.fetchone()["total"])
+        cur.execute("SELECT max(updated_at) AS latest FROM public.content WHERE source = 'tmdb'")
+        tmdb_content_latest = cur.fetchone()["latest"]
 
-        cur.execute("SELECT count(*) FROM {schema}.tmdb_enrichment".format(schema=schema))
-        tmdb_enrichment_total = int(cur.fetchone()[0])
-        cur.execute("SELECT max(updated_at) FROM {schema}.tmdb_enrichment".format(schema=schema))
-        tmdb_enrichment_latest = cur.fetchone()[0]
+        cur.execute("SELECT count(*) AS total FROM {schema}.tmdb_enrichment".format(schema=schema))
+        tmdb_enrichment_total = int(cur.fetchone()["total"])
+        cur.execute("SELECT max(updated_at) AS latest FROM {schema}.tmdb_enrichment".format(schema=schema))
+        tmdb_enrichment_latest = cur.fetchone()["latest"]
         cur.execute(
             """
-            SELECT count(*)
+            SELECT count(*) AS total
             FROM {schema}.tmdb_enrichment
             WHERE (aka IS NULL OR aka = '')
               AND (keywords IS NULL OR keywords = '')
             """.format(schema=schema)
         )
-        tmdb_enrichment_missing = int(cur.fetchone()[0])
+        tmdb_enrichment_missing = int(cur.fetchone()["total"])
 
         source_rows: List[SyncStatusSource] = []
         for source in sources:
@@ -591,39 +613,39 @@ def sync_status(_: Dict[str, Any] | None = Depends(require_user)) -> Dict[str, A
             updated_at_field = pg_cfg.get("updated_at_field")
             if not table or not id_field:
                 continue
-            cur.execute(f"SELECT count(*) FROM {table}")
-            total = int(cur.fetchone()[0])
+            cur.execute(f"SELECT count(*) AS total FROM {table}")
+            total = int(cur.fetchone()["total"])
             cur.execute(
-                f"SELECT count(*) FROM {schema}.sync_state WHERE source = %s",
+                f"SELECT count(*) AS total FROM {schema}.sync_state WHERE source = %s",
                 (name,),
             )
-            synced = int(cur.fetchone()[0])
+            synced = int(cur.fetchone()["total"])
             max_src = None
             max_sync = None
             max_synced_src = None
             if updated_at_field:
-                cur.execute(f"SELECT max({updated_at_field}) FROM {table}")
-                max_src = cur.fetchone()[0]
+                cur.execute(f"SELECT max({updated_at_field}) AS latest FROM {table}")
+                max_src = cur.fetchone()["latest"]
                 cur.execute(
-                    f"SELECT max(updated_at) FROM {schema}.sync_state WHERE source = %s",
+                    f"SELECT max(updated_at) AS latest FROM {schema}.sync_state WHERE source = %s",
                     (name,),
                 )
-                max_sync = cur.fetchone()[0]
+                max_sync = cur.fetchone()["latest"]
                 cur.execute(
                     f"""
-                    SELECT max(t.{updated_at_field})
+                    SELECT max(t.{updated_at_field}) AS latest
                     FROM {table} t
                     JOIN {schema}.sync_state s
                       ON s.source = %s AND s.pg_id = t.{id_field}::text
                     """,
                     (name,),
                 )
-                max_synced_src = cur.fetchone()[0]
+                max_synced_src = cur.fetchone()["latest"]
             cur.execute(
-                f"SELECT count(*) FROM {schema}.sync_state WHERE source = %s AND last_error IS NOT NULL",
+                f"SELECT count(*) AS total FROM {schema}.sync_state WHERE source = %s AND last_error IS NOT NULL",
                 (name,),
             )
-            errors = int(cur.fetchone()[0])
+            errors = int(cur.fetchone()["total"])
             source_rows.append(
                 SyncStatusSource(
                     name=name,

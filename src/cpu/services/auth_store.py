@@ -131,6 +131,23 @@ class AuthStore:
         data["users"] = users
         self._save(data)
 
+    def update_password(self, username: str, old_password: str, new_password: str) -> None:
+        data = self._load()
+        users = data.get("users", [])
+        for user in users:
+            if user.get("username") != username:
+                continue
+            salt = user.get("salt", "")
+            hashed = user.get("password_hash", "")
+            if hashed != self._hash_password(old_password, salt):
+                raise ValueError("Invalid password")
+            new_salt = secrets.token_hex(8)
+            user["salt"] = new_salt
+            user["password_hash"] = self._hash_password(new_password, new_salt)
+            self._save(data)
+            return
+        raise ValueError("User not found")
+
     def delete_user(self, username: str) -> None:
         data = self._load()
         users = [u for u in data.get("users", []) if u.get("username") != username]
