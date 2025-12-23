@@ -36,6 +36,13 @@ if not sources:
 
 with psycopg.connect(dsn, autocommit=True) as conn:
     with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM public.content WHERE source = 'tmdb'")
+        tmdb_content_total = cur.fetchone()[0]
+        cur.execute("SELECT max(updated_at) FROM public.content WHERE source = 'tmdb'")
+        tmdb_content_latest = cur.fetchone()[0]
+        print("TMDB content:")
+        print(f"  public.content (source=tmdb): {tmdb_content_total}")
+        print(f"  public.content latest updated_at: {tmdb_content_latest}")
         cur.execute(
             "SELECT to_regclass(%s)",
             (f"{schema}.tmdb_enrichment",),
