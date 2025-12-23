@@ -260,9 +260,10 @@ class PGClient:
         if where_extra:
             where_sql = f"{where_sql} AND ({where_extra})"
         sql_text = f"""
-        SELECT {id_field}::text AS pg_id, {text_field} AS title
+        SELECT DISTINCT ON ({text_field}) {id_field}::text AS pg_id, {text_field} AS title
         FROM {table}
         WHERE {where_sql}
+        ORDER BY {text_field}, {id_field}
         LIMIT %s
         """
         params = [f"%{query}%"] * len(fields) + [limit]
