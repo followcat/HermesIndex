@@ -93,21 +93,92 @@
               <span v-if="item.genre">{{ item.genre }}</span>
               <span v-if="item.updated_at">更新 {{ formatDate(item.updated_at) }}</span>
             </div>
-          </div>
-        </div>
-        <div class="latest-detail">
-          <div v-if="latestDetailLoading" class="empty">加载详情...</div>
-          <div v-else-if="!latestDetail" class="empty">暂无详情</div>
+            <div v-if="selectedLatest?.content_uid === item.content_uid" class="latest-detail">
+              <div v-if="latestDetailLoading" class="empty">加载详情...</div>
+              <div v-else-if="!latestDetail" class="empty">暂无详情</div>
           <div v-else class="latest-detail-body">
-            <div class="meta">
-              <span v-if="latestDetail.genre">类型: {{ latestDetail.genre }}</span>
-              <span v-if="latestDetail.directors">导演: {{ latestDetail.directors }}</span>
-              <span v-if="latestDetail.actors">演员: {{ latestDetail.actors }}</span>
+              <div class="latest-detail-grid">
+                <div v-if="latestDetail.poster_url" class="latest-poster">
+                  <img :src="latestDetail.poster_url" alt="TMDB Poster" />
+                </div>
+                <div class="latest-detail-info">
+                  <div class="latest-kv">
+                    <span v-if="latestDetail.type" class="kv-key">类型</span>
+                    <div v-if="latestDetail.type" class="kv-value">
+                      <button class="link-btn" @click="searchFromText(latestDetail.type)">
+                        {{ latestDetail.type }}
+                      </button>
+                    </div>
+                    <span v-if="latestDetail.genre" class="kv-key">风格</span>
+                    <div v-if="latestDetail.genre" class="kv-value">
+                      <div class="tag-list">
+                        <button
+                          v-for="(token, idx) in splitTokens(latestDetail.genre, 'default')"
+                          :key="`genre-${idx}-${token}`"
+                          class="link-btn tag-btn"
+                          @click="searchFromText(token)"
+                        >
+                          {{ token }}
+                        </button>
+                      </div>
+                    </div>
+                    <span v-if="latestDetail.directors" class="kv-key">导演</span>
+                    <div v-if="latestDetail.directors" class="kv-value">
+                      <div class="tag-list">
+                        <button
+                          v-for="(token, idx) in splitTokens(latestDetail.directors, 'person')"
+                          :key="`directors-${idx}-${token}`"
+                          class="link-btn tag-btn"
+                          @click="searchFromText(token)"
+                        >
+                          {{ token }}
+                        </button>
+                      </div>
+                    </div>
+                    <span v-if="latestDetail.actors" class="kv-key">演员</span>
+                    <div v-if="latestDetail.actors" class="kv-value">
+                      <div class="tag-list">
+                        <button
+                          v-for="(token, idx) in splitTokens(latestDetail.actors, 'person')"
+                          :key="`actors-${idx}-${token}`"
+                          class="link-btn tag-btn"
+                          @click="searchFromText(token)"
+                        >
+                          {{ token }}
+                        </button>
+                      </div>
+                    </div>
+                    <span v-if="latestDetail.aka" class="kv-key">别名</span>
+                    <div v-if="latestDetail.aka" class="kv-value">
+                      <div class="tag-list">
+                        <button
+                          v-for="(token, idx) in splitTokens(latestDetail.aka, 'person')"
+                          :key="`aka-${idx}-${token}`"
+                          class="link-btn tag-btn"
+                          @click="searchFromText(token)"
+                        >
+                          {{ token }}
+                        </button>
+                      </div>
+                    </div>
+                    <span v-if="latestDetail.keywords" class="kv-key">关键词</span>
+                    <div v-if="latestDetail.keywords" class="kv-value">
+                      <div class="tag-list">
+                        <button
+                          v-for="(token, idx) in splitTokens(latestDetail.keywords, 'default')"
+                          :key="`keywords-${idx}-${token}`"
+                          class="link-btn tag-btn"
+                          @click="searchFromText(token)"
+                        >
+                          {{ token }}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <p v-if="latestDetail.plot" class="latest-detail-plot">{{ latestDetail.plot }}</p>
+                </div>
+              </div>
             </div>
-            <p v-if="latestDetail.plot">{{ latestDetail.plot }}</p>
-            <div class="meta">
-              <span v-if="latestDetail.aka">别名: {{ latestDetail.aka }}</span>
-              <span v-if="latestDetail.keywords">关键词: {{ latestDetail.keywords }}</span>
             </div>
           </div>
         </div>
@@ -306,13 +377,24 @@ async function fetchLatestTmdb() {
 }
 
 function selectLatest(item) {
+  if (selectedLatest.value?.content_uid === item.content_uid) {
+    selectedLatest.value = null;
+    latestDetail.value = null;
+    return;
+  }
   selectedLatest.value = item;
+  latestDetail.value = null;
   fetchLatestDetail(item);
 }
 
 async function fetchLatestDetail(item) {
   if (!item?.tmdb_id) {
-    latestDetail.value = null;
+    latestDetail.value = {
+      title: item?.title,
+      release_year: item?.release_year,
+      type: item?.type,
+      genre: item?.genre,
+    };
     return;
   }
   latestDetailLoading.value = true;
@@ -324,13 +406,45 @@ async function fetchLatestDetail(item) {
     const resp = await fetch(`${apiBase}/tmdb_detail?${params.toString()}`);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
-    latestDetail.value = data.detail || null;
+    latestDetail.value = data.detail
+      ? {
+          ...latestDetail.value,
+          ...data.detail,
+          title: latestDetail.value?.title || item?.title,
+          release_year: latestDetail.value?.release_year || item?.release_year,
+          type: latestDetail.value?.type || item?.type,
+          genre: data.detail?.genre || latestDetail.value?.genre,
+        }
+      : latestDetail.value;
   } catch (err) {
     console.error(err);
-    latestDetail.value = null;
+    latestDetail.value = latestDetail.value || {
+      title: item?.title,
+      release_year: item?.release_year,
+      type: item?.type,
+      genre: item?.genre,
+    };
   } finally {
     latestDetailLoading.value = false;
   }
+}
+
+function searchFromText(text) {
+  const keyword = String(text || "").trim();
+  if (!keyword) return;
+  tmdbOnly.value = true;
+  query.value = keyword;
+  runSearch(true);
+}
+
+function splitTokens(text, mode = "default") {
+  const raw = String(text || "");
+  const pattern =
+    mode === "person" ? /[，,;/|\\n]+/ : /[，,;/·|\\n]+/;
+  return raw
+    .split(pattern)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
 }
 
 onMounted(() => {
