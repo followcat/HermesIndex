@@ -234,12 +234,22 @@
           <div v-if="selected.metadata.video_codec">{{ selected.metadata.video_codec }}</div>
           <span v-if="selected.metadata.tags">标签</span>
           <div v-if="selected.metadata.tags">{{ formatList(selected.metadata.tags) }}</div>
-          <span v-if="selected.metadata.actors">演员</span>
-          <div v-if="selected.metadata.actors">{{ selected.metadata.actors }}</div>
           <span v-if="selected.metadata.directors">导演</span>
           <div v-if="selected.metadata.directors">{{ selected.metadata.directors }}</div>
-          <span v-if="selected.metadata.aka">别名</span>
-          <div v-if="selected.metadata.aka">{{ selected.metadata.aka }}</div>
+        </div>
+        <div class="kv-collapses">
+          <details v-if="selected.metadata.actors" class="kv-collapse">
+            <summary>演员</summary>
+            <div class="kv-collapse-body">{{ selected.metadata.actors }}</div>
+          </details>
+          <details v-if="selected.metadata.aka" class="kv-collapse">
+            <summary>别名</summary>
+            <div class="kv-collapse-body">{{ selected.metadata.aka }}</div>
+          </details>
+          <details v-if="selected.metadata.keywords" class="kv-collapse">
+            <summary>关键词</summary>
+            <div class="kv-collapse-body">{{ selected.metadata.keywords }}</div>
+          </details>
         </div>
       </template>
       <template v-else>
@@ -365,7 +375,17 @@ const emptyMessage = computed(() => {
 
 const currentPage = computed(() => cursorStack.value.length + 1);
 
-const filteredResults = computed(() => results.value);
+const filteredResults = computed(() => {
+  const seen = new Set();
+  const output = [];
+  for (const item of results.value) {
+    const key = resultKey(item);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    output.push(item);
+  }
+  return output;
+});
 const isAuthenticated = computed(() => !authRequired.value || !!authToken.value);
 const isAdmin = computed(() => currentUser.value?.role === "admin");
 
@@ -392,6 +412,17 @@ const magnetLink = computed(() => {
 
 function itemKey(item) {
   return `${item.source}:${item.pg_id}`;
+}
+
+function resultKey(item) {
+  if (!item) return "";
+  const meta = item.metadata || {};
+  const infoHash = normalizeInfoHash(meta.info_hash || item.pg_id);
+  if (infoHash) return `hash:${infoHash}`;
+  const title = String(item.title || meta.title || "").trim().toLowerCase();
+  const year = meta.release_year ? String(meta.release_year).trim() : "";
+  if (title) return `title:${title}:${year}`;
+  return itemKey(item);
 }
 
 function normalizeInfoHash(raw) {

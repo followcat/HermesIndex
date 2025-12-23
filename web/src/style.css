@@ -536,6 +536,37 @@ input {
   color: var(--ink-soft);
 }
 
+.kv-collapses {
+  display: grid;
+  gap: 8px;
+}
+
+.kv-collapse {
+  background: #121212;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 8px 12px;
+}
+
+.kv-collapse summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--ink);
+  list-style: none;
+}
+
+.kv-collapse summary::-webkit-details-marker {
+  display: none;
+}
+
+.kv-collapse-body {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--ink-soft);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
 .empty {
   font-size: 14px;
   color: var(--ink-soft);
