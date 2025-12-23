@@ -122,6 +122,39 @@ class ChangePasswordRequest(BaseModel):
     new_password: str
 
 
+def _search_result_key(item: SearchResult) -> str:
+    meta = item.metadata or {}
+    title = normalize_title_text(item.title or "") or normalize_title_text(str(meta.get("title") or ""))
+    if title:
+        return f"title:{title}"
+    return f"id:{item.source}:{item.pg_id}"
+
+
+def _dedupe_search_results(items: List[SearchResult]) -> List[SearchResult]:
+    seen: set[str] = set()
+    output: List[SearchResult] = []
+    for item in items:
+        key = _search_result_key(item)
+        if key in seen:
+            continue
+        seen.add(key)
+        output.append(item)
+    return output
+
+
+def _dedupe_vector_hits(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    seen: set[str] = set()
+    output: List[Dict[str, Any]] = []
+    for item in items:
+        text_hash = str(item.get("text_hash") or "").strip()
+        key = text_hash or f"{item.get('source')}:{item.get('pg_id')}"
+        if key in seen:
+            continue
+        seen.add(key)
+        output.append(item)
+    return output
+
+
 class SyncStatusSource(BaseModel):
     name: str
     table: str
@@ -453,11 +486,8 @@ def search(
         offset=cursor,
     )
     raw_count = len(results)
-    filtered = []
-    for r in results:
-        if exclude_nsfw and r.get("nsfw"):
-            continue
-        filtered.append(r)
+    filtered = _dedupe_vector_hits(results)
+    filtered = [r for r in filtered if not (exclude_nsfw and r.get("nsfw"))]
     next_cursor = cursor + raw_count if raw_count == fetch_k else None
     ids_by_source: Dict[str, List[str]] = {}
     for r in filtered:
@@ -518,11 +548,12 @@ def search(
                 )
             )
     enriched.sort(key=lambda x: x.score, reverse=True)
+    deduped = _dedupe_search_results(enriched)
     return {
-        "count": len(enriched),
+        "count": len(deduped),
         "next_cursor": next_cursor,
         "page_size": page_size,
-        "results": [e.model_dump() for e in enriched],
+        "results": [e.model_dump() for e in deduped],
     }
 
 
