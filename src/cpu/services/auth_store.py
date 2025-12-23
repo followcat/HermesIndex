@@ -8,14 +8,23 @@ from typing import Any, Dict, List, Optional
 
 
 class AuthStore:
-    def __init__(self, user_store_path: str, admin_user: str, admin_password: str, token_ttl: int = 86400):
+    def __init__(
+        self,
+        user_store_path: str,
+        admin_user: str,
+        admin_password: str,
+        token_ttl: int = 86400,
+        token_store_path: str | None = None,
+    ):
         self.user_store_path = user_store_path
         self.admin_user = admin_user
         self.admin_password = admin_password
         self.token_ttl = int(token_ttl)
+        self.token_store_path = token_store_path or os.path.join(os.path.dirname(user_store_path), "tokens.json")
         self._lock = threading.Lock()
         self._tokens: Dict[str, Dict[str, Any]] = {}
         self._ensure_store()
+        self._load_tokens()
 
     def _ensure_store(self) -> None:
         directory = os.path.dirname(self.user_store_path)
@@ -23,6 +32,11 @@ class AuthStore:
             os.makedirs(directory, exist_ok=True)
         if not os.path.exists(self.user_store_path):
             self._save({"users": []})
+        token_dir = os.path.dirname(self.token_store_path)
+        if token_dir:
+            os.makedirs(token_dir, exist_ok=True)
+        if not os.path.exists(self.token_store_path):
+            self._save_tokens({})
 
     def _load(self) -> Dict[str, Any]:
         with self._lock:
@@ -36,16 +50,37 @@ class AuthStore:
             with open(self.user_store_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
 
+    def _load_tokens(self) -> None:
+        with self._lock:
+            if not os.path.exists(self.token_store_path):
+                self._tokens = {}
+                return
+            with open(self.token_store_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        tokens = {}
+        for token, meta in (data or {}).items():
+            if isinstance(meta, dict) and meta.get("username") and meta.get("issued_at"):
+                tokens[token] = meta
+        self._tokens = tokens
+        self._prune_tokens(save=True)
+
+    def _save_tokens(self, data: Dict[str, Any]) -> None:
+        with self._lock:
+            with open(self.token_store_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+
     @staticmethod
     def _hash_password(password: str, salt: str) -> str:
         payload = f"{salt}:{password}".encode("utf-8")
         return hashlib.sha256(payload).hexdigest()
 
-    def _prune_tokens(self) -> None:
+    def _prune_tokens(self, save: bool = False) -> None:
         now = int(time.time())
         expired = [t for t, meta in self._tokens.items() if now - meta["issued_at"] > self.token_ttl]
         for token in expired:
             self._tokens.pop(token, None)
+        if save and expired:
+            self._save_tokens(self._tokens)
 
     def login(self, username: str, password: str) -> Optional[Dict[str, Any]]:
         if username == self.admin_user and password == self.admin_password:
@@ -64,10 +99,11 @@ class AuthStore:
         self._prune_tokens()
         token = secrets.token_hex(24)
         self._tokens[token] = {"username": username, "role": role, "issued_at": int(time.time())}
+        self._save_tokens(self._tokens)
         return token
 
     def verify_token(self, token: str) -> Optional[Dict[str, Any]]:
-        self._prune_tokens()
+        self._prune_tokens(save=True)
         return self._tokens.get(token)
 
     def list_users(self) -> List[Dict[str, Any]]:

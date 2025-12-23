@@ -38,8 +38,15 @@ if auth_enabled:
     if not admin_user or not admin_password:
         raise ValueError("auth.enabled=true requires auth.admin_user and auth.admin_password")
     user_store_path = auth_cfg.get("user_store_path", "data/users.json")
+    token_store_path = auth_cfg.get("token_store_path")
     token_ttl = int(auth_cfg.get("token_ttl_seconds", 86400))
-    auth_store = AuthStore(user_store_path, admin_user, admin_password, token_ttl=token_ttl)
+    auth_store = AuthStore(
+        user_store_path,
+        admin_user,
+        admin_password,
+        token_ttl=token_ttl,
+        token_store_path=token_store_path,
+    )
 
 
 class SearchResult(BaseModel):
