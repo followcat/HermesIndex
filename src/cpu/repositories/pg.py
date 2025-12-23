@@ -322,18 +322,22 @@ class PGClient:
     def fetch_latest_tmdb(self, schema: str, limit: int = 50) -> List[Dict[str, Any]]:
         sql_text = sql.SQL(
             """
-            SELECT content_uid,
-                   tmdb_id,
-                   title,
-                   original_title,
-                   release_year,
-                   updated_at,
-                   type,
-                   genre,
-                   keywords
-            FROM {schema}.content_view
-            WHERE tmdb_id IS NOT NULL
-            ORDER BY updated_at DESC NULLS LAST
+            SELECT
+                (c.type || ':' || c.source || ':' || c.id) AS content_uid,
+                c.id AS tmdb_id,
+                c.title,
+                c.original_title,
+                c.release_year,
+                c.updated_at,
+                c.type,
+                te.genre,
+                te.keywords
+            FROM public.content c
+            LEFT JOIN {schema}.tmdb_enrichment te
+                ON te.content_type = c.type
+                AND te.tmdb_id = c.id
+            WHERE c.source = 'tmdb'
+            ORDER BY c.updated_at DESC NULLS LAST
             LIMIT %s
             """
         ).format(schema=sql.Identifier(schema))
