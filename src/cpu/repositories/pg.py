@@ -319,6 +319,28 @@ class PGClient:
                         tokens[token] = max(tokens.get(token, 0), 1)
         return tokens
 
+    def fetch_latest_tmdb(self, schema: str, limit: int = 50) -> List[Dict[str, Any]]:
+        sql_text = sql.SQL(
+            """
+            SELECT content_uid,
+                   tmdb_id,
+                   title,
+                   original_title,
+                   release_year,
+                   updated_at,
+                   type,
+                   genre,
+                   keywords
+            FROM {schema}.content_view
+            WHERE tmdb_id IS NOT NULL
+            ORDER BY updated_at DESC NULLS LAST
+            LIMIT %s
+            """
+        ).format(schema=sql.Identifier(schema))
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(sql_text, (limit,))
+            return cur.fetchall()
+
     @staticmethod
     def _table_identifier(table: str) -> sql.Identifier:
         if "." in table:

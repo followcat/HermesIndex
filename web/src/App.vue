@@ -65,6 +65,31 @@
           </div>
         </article>
       </div>
+
+      <div class="latest">
+        <div class="latest-header">
+          <h2>最新 TMDB 收录</h2>
+          <button class="action-btn" @click="fetchLatestTmdb" :disabled="latestLoading">
+            {{ latestLoading ? "刷新中..." : "刷新" }}
+          </button>
+        </div>
+        <div v-if="latestLoading" class="empty">加载中...</div>
+        <div v-else-if="latestTmdb.length === 0" class="empty">暂无记录</div>
+        <div v-else class="latest-list">
+          <div v-for="item in latestTmdb" :key="item.content_uid" class="latest-item">
+            <div class="latest-title">
+              {{ item.title }}
+              <span v-if="item.release_year">({{ item.release_year }})</span>
+            </div>
+            <div class="meta">
+              <span class="badge">TMDB {{ item.tmdb_id }}</span>
+              <span v-if="item.type">{{ item.type }}</span>
+              <span v-if="item.genre">{{ item.genre }}</span>
+              <span v-if="item.updated_at">更新 {{ formatDate(item.updated_at) }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
     </section>
 
     <aside class="detail">
@@ -119,7 +144,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 
 const apiBase = import.meta.env.VITE_API_BASE || "/api";
 const query = ref("");
@@ -133,6 +158,8 @@ const results = ref([]);
 const selected = ref(null);
 const selectedFiles = ref([]);
 const filesLoading = ref(false);
+const latestTmdb = ref([]);
+const latestLoading = ref(false);
 
 const emptyMessage = computed(() => {
   if (loading.value) return "搜索中...";
@@ -228,6 +255,31 @@ async function runSearch(resetPage = false) {
   }
 }
 
+function formatDate(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString();
+}
+
+async function fetchLatestTmdb() {
+  latestLoading.value = true;
+  try {
+    const resp = await fetch(`${apiBase}/tmdb_latest?limit=50`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    latestTmdb.value = data.results || [];
+  } catch (err) {
+    console.error(err);
+    latestTmdb.value = [];
+  } finally {
+    latestLoading.value = false;
+  }
+}
+
+onMounted(() => {
+  fetchLatestTmdb();
+});
 function prevPage() {
   if (page.value <= 1) return;
   page.value -= 1;

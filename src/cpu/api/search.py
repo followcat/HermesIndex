@@ -46,6 +46,18 @@ class TorrentFile(BaseModel):
     updated_at: datetime | None = None
 
 
+class LatestTmdbItem(BaseModel):
+    content_uid: str
+    tmdb_id: str
+    title: str
+    original_title: str | None = None
+    release_year: int | None = None
+    updated_at: datetime | None = None
+    type: str | None = None
+    genre: str | None = None
+    keywords: str | None = None
+
+
 def embed_query(text: str) -> np.ndarray:
     if not text:
         raise HTTPException(status_code=400, detail="Empty query")
@@ -342,3 +354,10 @@ def torrent_files(info_hash: str = Query(..., description="info_hash in \\x... t
     schema = (cfg.bitmagnet or {}).get("schema", "hermes")
     rows = pg_client.fetch_torrent_files(schema, info_hash)
     return {"count": len(rows), "files": [TorrentFile(**r).model_dump() for r in rows]}
+
+
+@app.get("/tmdb_latest")
+def tmdb_latest(limit: int = Query(50, ge=1, le=100)) -> Dict[str, Any]:
+    schema = (cfg.bitmagnet or {}).get("schema", "hermes")
+    rows = pg_client.fetch_latest_tmdb(schema, limit=limit)
+    return {"count": len(rows), "results": [LatestTmdbItem(**r).model_dump() for r in rows]}
