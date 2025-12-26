@@ -234,6 +234,14 @@
                           </button>
                         </div>
                       </div>
+                      <div v-if="latestDetail.aka" class="latest-meta-row">
+                        <span class="latest-meta-label">别名</span>
+                        <span>{{ akaPreview(latestDetail.aka) }}</span>
+                      </div>
+                      <div v-if="latestPlotPreview" class="latest-meta-row">
+                        <span class="latest-meta-label">简介</span>
+                        <span>{{ latestPlotPreview }}</span>
+                      </div>
                     </div>
                     <p class="latest-detail-plot">{{ latestPlotSummary }}</p>
                     <div class="latest-actions" v-if="latestMagnetLink">
@@ -461,6 +469,14 @@ const detailSummary = computed(() => {
 const latestPlotSummary = computed(() => {
   const detail = latestDetail.value || {};
   return detail.plot || detail.overview || detail.title || "暂无简介";
+});
+
+const latestPlotPreview = computed(() => {
+  const detail = latestDetail.value || {};
+  const text = detail.plot || detail.overview || "";
+  const trimmed = String(text).trim();
+  if (!trimmed) return "";
+  return trimmed.length > 100 ? `${trimmed.slice(0, 100)}...` : trimmed;
 });
 
 const latestTitleSummary = computed(() => {
