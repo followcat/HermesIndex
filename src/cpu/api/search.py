@@ -497,19 +497,27 @@ def search(
     query_vec = embed_query(final_query)
     genre_filters = filters.get("genres", [])
     fetch_k = min(100, max(topk, page_size))
+    size_sort_norm = (size_sort or "").strip().lower()
+    size_min_bytes = None
+    if size_min_gb is not None:
+        size_min_bytes = int(max(size_min_gb, 0) * (1024**3))
     metadata_filter = None
-    if tmdb_only or genre_filters or filters.get("file_type") or filters.get("audio_langs") or filters.get("subtitle_langs"):
+    if (
+        tmdb_only
+        or genre_filters
+        or filters.get("file_type")
+        or filters.get("audio_langs")
+        or filters.get("subtitle_langs")
+        or size_min_bytes
+    ):
         metadata_filter = {
             "has_tmdb": tmdb_only,
             "genres": genre_filters,
             "file_type": filters.get("file_type"),
             "audio_langs": filters.get("audio_langs"),
             "subtitle_langs": filters.get("subtitle_langs"),
+            "size_min": size_min_bytes,
         }
-    size_sort_norm = (size_sort or "").strip().lower()
-    size_min_bytes = None
-    if size_min_gb is not None:
-        size_min_bytes = int(max(size_min_gb, 0) * (1024**3))
     results = vector_store.query(
         np.asarray([query_vec], dtype="float32"),
         topk=fetch_k,

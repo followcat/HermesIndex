@@ -125,19 +125,29 @@ class HNSWVectorStore(BaseVectorStore):
     ) -> List[Dict[str, Any]]:
         if not self.meta:
             return []
-        k = min(topk + max(offset, 0), len(self.meta))
+        size_min = metadata_filter.get("size_min") if metadata_filter else None
+        overfetch = 200 if size_min else 0
+        k = min(topk + max(offset, 0) + overfetch, len(self.meta))
         labels, distances = self.index.knn_query(embedding, k=k)
+        candidates = list(zip(labels[0], distances[0]))
         results: List[Dict[str, Any]] = []
-        sliced = list(zip(labels[0], distances[0]))[offset : offset + topk]
-        for label, distance in sliced:
+        for label, distance in candidates:
             meta = self.meta.get(int(label))
             if not meta:
                 continue
+            if size_min is not None:
+                raw_size = meta.get("size")
+                try:
+                    size_val = float(raw_size)
+                except (TypeError, ValueError):
+                    size_val = None
+                if size_val is None or size_val < float(size_min):
+                    continue
             score = float(1 - distance) if self.metric == "cosine" else float(-distance)
             result = {"score": score}
             result.update(meta)
             results.append(result)
-        return results
+        return results[offset : offset + topk]
 
     def size(self) -> int:
         return len(self.meta)
@@ -188,12 +198,20 @@ class QdrantVectorStore(BaseVectorStore):
         offset: int = 0,
     ) -> List[Dict[str, Any]]:
         query_filter = None
-        if metadata_filter and (metadata_filter.get("has_tmdb") or metadata_filter.get("genres")):
+        if metadata_filter and (
+            metadata_filter.get("has_tmdb")
+            or metadata_filter.get("genres")
+            or metadata_filter.get("file_type")
+            or metadata_filter.get("audio_langs")
+            or metadata_filter.get("subtitle_langs")
+            or metadata_filter.get("size_min") is not None
+        ):
             from qdrant_client.http.models import (
                 Filter,
                 FieldCondition,
                 MatchAny,
                 MatchValue,
+                Range,
             )
 
             must_conditions = []
@@ -218,6 +236,11 @@ class QdrantVectorStore(BaseVectorStore):
             if subtitle_langs:
                 must_conditions.append(
                     FieldCondition(key="subtitle_langs", match=MatchAny(any=subtitle_langs))
+                )
+            size_min = metadata_filter.get("size_min")
+            if size_min is not None:
+                must_conditions.append(
+                    FieldCondition(key="size", range=Range(gte=float(size_min)))
                 )
             if must_conditions:
                 query_filter = Filter(must=must_conditions)
@@ -245,7 +268,14 @@ class QdrantVectorStore(BaseVectorStore):
 
             base_url = self.url.rstrip("/")
             filter_payload = None
-            if metadata_filter and (metadata_filter.get("has_tmdb") or metadata_filter.get("genres")):
+            if metadata_filter and (
+                metadata_filter.get("has_tmdb")
+                or metadata_filter.get("genres")
+                or metadata_filter.get("file_type")
+                or metadata_filter.get("audio_langs")
+                or metadata_filter.get("subtitle_langs")
+                or metadata_filter.get("size_min") is not None
+            ):
                 must_conditions = []
                 if metadata_filter.get("has_tmdb"):
                     must_conditions.append({"key": "has_tmdb", "match": {"value": True}})
@@ -268,6 +298,11 @@ class QdrantVectorStore(BaseVectorStore):
                 if subtitle_langs:
                     must_conditions.append(
                         {"key": "subtitle_langs", "match": {"any": subtitle_langs}}
+                    )
+                size_min = metadata_filter.get("size_min")
+                if size_min is not None:
+                    must_conditions.append(
+                        {"key": "size", "range": {"gte": float(size_min)}}
                     )
                 if must_conditions:
                     filter_payload = {"must": must_conditions}

@@ -195,6 +195,16 @@ def sync_source(
             extension = row.get("extension") or _extract_extension(str(row.get("text", "")))
             file_type = _detect_file_type(str(extension))
             audio_langs, subtitle_langs = _detect_languages(str(row.get("text", "")))
+            size_field = (source.get("pg") or {}).get("size_field", "size")
+            size_value = None
+            if size_field:
+                raw_size = row.get(size_field)
+                try:
+                    size_num = float(raw_size)
+                except (TypeError, ValueError):
+                    size_num = None
+                if size_num is not None and size_num > 0:
+                    size_value = size_num
             metas.append(
                 {
                     "source": source["name"],
@@ -209,6 +219,7 @@ def sync_source(
                     "file_type": file_type,
                     "audio_langs": audio_langs,
                     "subtitle_langs": subtitle_langs,
+                    "size": size_value,
                 }
             )
             updates.append(
