@@ -71,16 +71,26 @@
           @click="selectItem(item)"
         >
           <template v-if="isTmdbResult(item)">
-            <div class="latest-title">
-              {{ tmdbTitle(item) }}
-              <span v-if="item.metadata.release_year">({{ item.metadata.release_year }})</span>
-            </div>
-            <div class="meta">
-              <span v-if="item.metadata.tmdb_id" class="badge">TMDB {{ item.metadata.tmdb_id }}</span>
-              <span v-else class="badge">{{ item.source }}</span>
-              <span v-if="item.metadata.type">{{ item.metadata.type }}</span>
-              <span v-if="item.metadata.genre">{{ item.metadata.genre }}</span>
-              <span v-if="item.metadata.updated_at">更新 {{ formatDate(item.metadata.updated_at) }}</span>
+            <div class="tmdb-result">
+              <img
+                v-if="tmdbPosterUrl(item)"
+                :src="tmdbPosterUrl(item)"
+                alt="TMDB Poster"
+                class="tmdb-result-poster"
+              />
+              <div class="tmdb-result-body">
+                <div class="latest-title">
+                  {{ tmdbTitle(item) }}
+                  <span v-if="item.metadata.release_year">({{ item.metadata.release_year }})</span>
+                </div>
+                <div class="meta">
+                  <span v-if="item.metadata.tmdb_id" class="badge">TMDB {{ item.metadata.tmdb_id }}</span>
+                  <span v-else class="badge">{{ item.source }}</span>
+                  <span v-if="item.metadata.type">{{ item.metadata.type }}</span>
+                  <span v-if="item.metadata.genre">{{ item.metadata.genre }}</span>
+                  <span v-if="item.metadata.updated_at">更新 {{ formatDate(item.metadata.updated_at) }}</span>
+                </div>
+              </div>
             </div>
           </template>
           <template v-else>
@@ -117,6 +127,24 @@
                 <span class="file-path">{{ file.path }}</span>
                 <span class="file-size">{{ prettySize(file.size) }}</span>
               </div>
+            </div>
+            <div class="kv">
+              <span>来源</span>
+              <div>{{ selected.source }}</div>
+              <span>PG ID</span>
+              <div class="mono">{{ selected.pg_id }}</div>
+              <span v-if="selected.metadata.tmdb_id">TMDB</span>
+              <div v-if="selected.metadata.tmdb_id">{{ selected.metadata.tmdb_id }}</div>
+              <span v-if="selected.metadata.release_year">年份</span>
+              <div v-if="selected.metadata.release_year">{{ selected.metadata.release_year }}</div>
+              <span v-if="selected.metadata.video_resolution">分辨率</span>
+              <div v-if="selected.metadata.video_resolution">{{ selected.metadata.video_resolution }}</div>
+              <span v-if="selected.metadata.video_codec">编码</span>
+              <div v-if="selected.metadata.video_codec">{{ selected.metadata.video_codec }}</div>
+              <span v-if="selected.metadata.tags">标签</span>
+              <div v-if="selected.metadata.tags">{{ formatList(selected.metadata.tags) }}</div>
+              <span v-if="selected.metadata.directors">导演</span>
+              <div v-if="selected.metadata.directors">{{ selected.metadata.directors }}</div>
             </div>
             <div class="kv-collapses">
               <details v-if="selected.metadata.actors" class="kv-collapse">
@@ -172,6 +200,7 @@
                     <img :src="latestDetail.poster_url" alt="TMDB Poster" />
                   </div>
                   <div class="latest-plot">
+                    <div class="latest-detail-title">{{ latestTitleSummary }}</div>
                     <div class="latest-meta-top">
                       <div v-if="latestDetail.type" class="latest-meta-row">
                         <span class="latest-meta-label">类型</span>
@@ -207,50 +236,21 @@
                       </div>
                     </div>
                     <p class="latest-detail-plot">{{ latestPlotSummary }}</p>
+                    <div class="latest-actions" v-if="latestMagnetLink">
+                      <button class="action-btn primary" @click.stop="copyLatestMagnet">
+                        复制磁力链接
+                      </button>
+                      <a class="action-btn" :href="latestMagnetLink" @click.stop>直接下载</a>
+                    </div>
+                    <div class="latest-actions" v-else-if="latestMagnetLoading">
+                      <span class="empty">磁力链接加载中...</span>
+                    </div>
+                    <div class="latest-actions" v-else-if="latestMagnetError">
+                      <span class="empty">未找到磁力链接</span>
+                    </div>
                   </div>
                 </div>
                 <div class="latest-detail-info">
-                    <details v-if="latestDetail.type" class="latest-kv" open @click.stop>
-                      <summary @click.stop>类型</summary>
-                      <div class="kv-value">
-                        <button class="link-btn" @click="searchFromText(latestDetail.type)">
-                          {{ latestDetail.type }}
-                        </button>
-                      </div>
-                    </details>
-                    <details v-if="latestDetail.genre" class="latest-kv" open @click.stop>
-                      <summary @click.stop>风格</summary>
-                      <div class="kv-value">
-                        <div class="tag-list">
-                          <button
-                            v-for="(token, idx) in splitTokens(latestDetail.genre, 'default')"
-                            :key="`genre-${idx}-${token}`"
-                            class="link-btn tag-btn"
-                            @click="searchFromText(token)"
-                          >
-                            {{ token }}
-                          </button>
-                        </div>
-                      </div>
-                    </details>
-                    <details v-if="latestDetail.directors" class="latest-kv" :open="!isMobile" @click.stop>
-                      <summary @click.stop>
-                        导演
-                        <span class="kv-preview">{{ directorsPreview(latestDetail.directors) }}</span>
-                      </summary>
-                      <div class="kv-value">
-                        <div class="tag-list">
-                          <button
-                            v-for="(token, idx) in splitTokens(latestDetail.directors, 'person')"
-                            :key="`directors-${idx}-${token}`"
-                            class="link-btn tag-btn"
-                            @click="searchFromText(token)"
-                          >
-                            {{ token }}
-                          </button>
-                        </div>
-                      </div>
-                    </details>
                     <details v-if="latestDetail.actors" class="latest-kv" :open="!isMobile" @click.stop>
                       <summary @click.stop>
                         演员
@@ -306,68 +306,11 @@
                 </div>
               </div>
             </div>
-          </div>
+        </div>
       </div>
     </section>
 
-    <aside class="detail">
-      <div class="detail-body">
-        <template v-if="selected">
-          <h2>{{ selected.title || "未命名" }}</h2>
-          <p>{{ detailSummary }}</p>
-          <p class="empty">文件列表：{{ fileListSummary }}</p>
-          <div class="actions">
-            <button class="action-btn primary" @click="copyMagnet" :disabled="!magnetLink">
-              复制磁力链接
-            </button>
-            <a v-if="magnetLink" class="action-btn" :href="magnetLink">直接下载</a>
-            <button class="action-btn" @click="clearSelection">清空详情</button>
-          </div>
-          <div class="file-list" v-if="selectedFiles.length">
-            <div v-for="file in selectedFiles" :key="file.index" class="file-item">
-              <span class="file-index">#{{ file.index }}</span>
-              <span class="file-path">{{ file.path }}</span>
-              <span class="file-size">{{ prettySize(file.size) }}</span>
-            </div>
-          </div>
-          <div class="kv">
-            <span>来源</span>
-            <div>{{ selected.source }}</div>
-            <span>PG ID</span>
-            <div class="mono">{{ selected.pg_id }}</div>
-            <span v-if="selected.metadata.tmdb_id">TMDB</span>
-            <div v-if="selected.metadata.tmdb_id">{{ selected.metadata.tmdb_id }}</div>
-            <span v-if="selected.metadata.release_year">年份</span>
-            <div v-if="selected.metadata.release_year">{{ selected.metadata.release_year }}</div>
-            <span v-if="selected.metadata.video_resolution">分辨率</span>
-            <div v-if="selected.metadata.video_resolution">{{ selected.metadata.video_resolution }}</div>
-            <span v-if="selected.metadata.video_codec">编码</span>
-            <div v-if="selected.metadata.video_codec">{{ selected.metadata.video_codec }}</div>
-            <span v-if="selected.metadata.tags">标签</span>
-            <div v-if="selected.metadata.tags">{{ formatList(selected.metadata.tags) }}</div>
-            <span v-if="selected.metadata.directors">导演</span>
-            <div v-if="selected.metadata.directors">{{ selected.metadata.directors }}</div>
-          </div>
-          <div class="kv-collapses">
-            <details v-if="selected.metadata.actors" class="kv-collapse">
-              <summary>演员</summary>
-              <div class="kv-collapse-body">{{ selected.metadata.actors }}</div>
-            </details>
-            <details v-if="selected.metadata.aka" class="kv-collapse">
-              <summary>别名</summary>
-              <div class="kv-collapse-body">{{ selected.metadata.aka }}</div>
-            </details>
-            <details v-if="selected.metadata.keywords" class="kv-collapse">
-              <summary>关键词</summary>
-              <div class="kv-collapse-body">{{ selected.metadata.keywords }}</div>
-            </details>
-          </div>
-        </template>
-        <template v-else>
-          <h2>详情</h2>
-          <p class="empty">选择一条结果查看详情与磁力下载。</p>
-        </template>
-      </div>
+    <div class="page-extra">
       <div v-if="isAuthenticated" class="password-panel">
         <h3>修改密码</h3>
         <div class="admin-actions">
@@ -406,7 +349,7 @@
         <span v-if="currentUser" class="mono">用户: {{ currentUser.username }} ({{ currentUser.role }})</span>
         <button class="action-btn" @click="logout">退出</button>
       </div>
-    </aside>
+    </div>
   </div>
   <footer v-if="isAuthenticated" class="status-footer">
     <div class="status-title">同步状态</div>
@@ -472,6 +415,9 @@ const latestLoading = ref(false);
 const selectedLatest = ref(null);
 const latestDetail = ref(null);
 const latestDetailLoading = ref(false);
+const latestMagnetLink = ref("");
+const latestMagnetLoading = ref(false);
+const latestMagnetError = ref(false);
 const syncStatus = ref(null);
 const statusLoading = ref(false);
 let statusTimer = null;
@@ -517,6 +463,11 @@ const latestPlotSummary = computed(() => {
   return detail.plot || detail.overview || detail.title || "暂无简介";
 });
 
+const latestTitleSummary = computed(() => {
+  const detail = latestDetail.value || {};
+  return detail.title || selectedLatest.value?.title || "未命名";
+});
+
 const fileListSummary = computed(() => {
   if (filesLoading.value) return "加载中...";
   if (!selectedFiles.value.length) return "暂无文件列表";
@@ -555,6 +506,13 @@ function isTmdbResult(item) {
 function tmdbTitle(item) {
   const meta = item?.metadata || {};
   return meta.title || item?.title || meta.original_title || "(无标题)";
+}
+
+function tmdbPosterUrl(item) {
+  const meta = item?.metadata || {};
+  if (meta.poster_url) return String(meta.poster_url);
+  if (meta.poster_path) return `https://image.tmdb.org/t/p/w185${meta.poster_path}`;
+  return "";
 }
 
 function normalizeInfoHash(raw) {
@@ -875,11 +833,16 @@ function selectLatest(item) {
   if (selectedLatest.value?.content_uid === item.content_uid) {
     selectedLatest.value = null;
     latestDetail.value = null;
+    latestMagnetLink.value = "";
+    latestMagnetError.value = false;
     return;
   }
   selectedLatest.value = item;
   latestDetail.value = null;
+  latestMagnetLink.value = "";
+  latestMagnetError.value = false;
   fetchLatestDetail(item);
+  fetchLatestMagnet(item);
 }
 
 async function fetchLatestDetail(item) {
@@ -921,6 +884,61 @@ async function fetchLatestDetail(item) {
     };
   } finally {
     latestDetailLoading.value = false;
+  }
+}
+
+function buildMagnetLink(item) {
+  const meta = item?.metadata || {};
+  const infoHash = normalizeInfoHash(meta.info_hash || item?.pg_id);
+  if (!infoHash) return "";
+  const name = encodeURIComponent(item?.title || meta.title || "torrent");
+  return `magnet:?xt=urn:btih:${infoHash}&dn=${name}`;
+}
+
+async function fetchLatestMagnet(item) {
+  const keyword = String(item?.title || item?.original_title || "").trim();
+  if (!keyword) {
+    latestMagnetError.value = true;
+    return;
+  }
+  latestMagnetLoading.value = true;
+  latestMagnetError.value = false;
+  latestMagnetLink.value = "";
+  try {
+    const params = new URLSearchParams({
+      q: keyword,
+      topk: "10",
+      exclude_nsfw: String(excludeNsfw.value),
+      tmdb_only: "false",
+      page_size: "10",
+      cursor: "0",
+    });
+    const resp = await apiFetch(`${apiBase}/search?${params.toString()}`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    const hits = Array.isArray(data.results) ? data.results : [];
+    for (const hit of hits) {
+      const magnet = buildMagnetLink(hit);
+      if (magnet) {
+        latestMagnetLink.value = magnet;
+        return;
+      }
+    }
+    latestMagnetError.value = true;
+  } catch (err) {
+    console.error(err);
+    latestMagnetError.value = true;
+  } finally {
+    latestMagnetLoading.value = false;
+  }
+}
+
+async function copyLatestMagnet() {
+  if (!latestMagnetLink.value) return;
+  try {
+    await navigator.clipboard.writeText(latestMagnetLink.value);
+  } catch (err) {
+    console.error(err);
   }
 }
 
