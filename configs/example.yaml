@@ -93,6 +93,7 @@ sources:
       text_field: "title"
       updated_at_field: "updated_at"   # optional
       extra_fields: ["category", "size"]
+      size_field: "size"
     vector_index:
       index_name: "torrents_title_v1"
       dim: 768
