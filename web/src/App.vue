@@ -171,17 +171,55 @@
                   <div v-if="latestDetail.poster_url" class="latest-poster">
                     <img :src="latestDetail.poster_url" alt="TMDB Poster" />
                   </div>
-                  <div class="latest-detail-info">
-                    <details v-if="latestDetail.type" class="latest-kv" :open="!isMobile">
-                      <summary>类型</summary>
+                  <div class="latest-plot">
+                    <div class="latest-meta-top">
+                      <div v-if="latestDetail.type" class="latest-meta-row">
+                        <span class="latest-meta-label">类型</span>
+                        <button class="link-btn tag-btn" @click="searchFromText(latestDetail.type)">
+                          {{ latestDetail.type }}
+                        </button>
+                      </div>
+                      <div v-if="latestDetail.genre" class="latest-meta-row">
+                        <span class="latest-meta-label">风格</span>
+                        <div class="tag-list">
+                          <button
+                            v-for="(token, idx) in splitTokens(latestDetail.genre, 'default')"
+                            :key="`top-genre-${idx}-${token}`"
+                            class="link-btn tag-btn"
+                            @click="searchFromText(token)"
+                          >
+                            {{ token }}
+                          </button>
+                        </div>
+                      </div>
+                      <div v-if="latestDetail.directors" class="latest-meta-row">
+                        <span class="latest-meta-label">导演</span>
+                        <div class="tag-list">
+                          <button
+                            v-for="(token, idx) in splitTokens(latestDetail.directors, 'person')"
+                            :key="`top-directors-${idx}-${token}`"
+                            class="link-btn tag-btn"
+                            @click="searchFromText(token)"
+                          >
+                            {{ token }}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                    <p class="latest-detail-plot">{{ latestPlotSummary }}</p>
+                  </div>
+                </div>
+                <div class="latest-detail-info">
+                    <details v-if="latestDetail.type" class="latest-kv" open @click.stop>
+                      <summary @click.stop>类型</summary>
                       <div class="kv-value">
                         <button class="link-btn" @click="searchFromText(latestDetail.type)">
                           {{ latestDetail.type }}
                         </button>
                       </div>
                     </details>
-                    <details v-if="latestDetail.genre" class="latest-kv" :open="!isMobile">
-                      <summary>风格</summary>
+                    <details v-if="latestDetail.genre" class="latest-kv" open @click.stop>
+                      <summary @click.stop>风格</summary>
                       <div class="kv-value">
                         <div class="tag-list">
                           <button
@@ -195,8 +233,11 @@
                         </div>
                       </div>
                     </details>
-                    <details v-if="latestDetail.directors" class="latest-kv" :open="!isMobile">
-                      <summary>导演</summary>
+                    <details v-if="latestDetail.directors" class="latest-kv" :open="!isMobile" @click.stop>
+                      <summary @click.stop>
+                        导演
+                        <span class="kv-preview">{{ directorsPreview(latestDetail.directors) }}</span>
+                      </summary>
                       <div class="kv-value">
                         <div class="tag-list">
                           <button
@@ -210,8 +251,11 @@
                         </div>
                       </div>
                     </details>
-                    <details v-if="latestDetail.actors" class="latest-kv" :open="!isMobile">
-                      <summary>演员</summary>
+                    <details v-if="latestDetail.actors" class="latest-kv" :open="!isMobile" @click.stop>
+                      <summary @click.stop>
+                        演员
+                        <span class="kv-preview">{{ actorPreview(latestDetail.actors) }}</span>
+                      </summary>
                       <div class="kv-value">
                         <div class="tag-list">
                           <button
@@ -225,8 +269,11 @@
                         </div>
                       </div>
                     </details>
-                    <details v-if="latestDetail.aka" class="latest-kv" :open="!isMobile">
-                      <summary>别名</summary>
+                    <details v-if="latestDetail.aka" class="latest-kv" :open="!isMobile" @click.stop>
+                      <summary @click.stop>
+                        别名
+                        <span class="kv-preview">{{ akaPreview(latestDetail.aka) }}</span>
+                      </summary>
                       <div class="kv-value">
                         <div class="tag-list">
                           <button
@@ -240,8 +287,8 @@
                         </div>
                       </div>
                     </details>
-                    <details v-if="latestDetail.keywords" class="latest-kv" :open="!isMobile">
-                      <summary>关键词</summary>
+                    <details v-if="latestDetail.keywords" class="latest-kv" :open="!isMobile" @click.stop>
+                      <summary @click.stop>关键词</summary>
                       <div class="kv-value">
                         <div class="tag-list">
                           <button
@@ -255,13 +302,11 @@
                         </div>
                       </div>
                     </details>
-                    <p v-if="latestDetail.plot" class="latest-detail-plot">{{ latestDetail.plot }}</p>
                   </div>
                 </div>
               </div>
             </div>
           </div>
-        </div>
       </div>
     </section>
 
@@ -467,6 +512,11 @@ const detailSummary = computed(() => {
   return meta.plot || meta.overview || meta.hint_title || meta.title || "暂无简介";
 });
 
+const latestPlotSummary = computed(() => {
+  const detail = latestDetail.value || {};
+  return detail.plot || detail.overview || detail.title || "暂无简介";
+});
+
 const fileListSummary = computed(() => {
   if (filesLoading.value) return "加载中...";
   if (!selectedFiles.value.length) return "暂无文件列表";
@@ -553,6 +603,16 @@ function applyTheme(value) {
   theme.value = next;
   localStorage.setItem("theme", next);
   document.documentElement.setAttribute("data-theme", next);
+  document.documentElement.classList.toggle("theme-light", next === "light");
+  if (document.body) {
+    document.body.setAttribute("data-theme", next);
+    document.body.classList.toggle("theme-light", next === "light");
+  }
+  const appRoot = document.getElementById("app");
+  if (appRoot) {
+    appRoot.setAttribute("data-theme", next);
+    appRoot.classList.toggle("theme-light", next === "light");
+  }
 }
 
 function toggleTheme() {
@@ -880,6 +940,21 @@ function splitTokens(text, mode = "default") {
     .split(pattern)
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
+}
+
+function actorPreview(text) {
+  const tokens = splitTokens(text, "person");
+  return tokens.slice(0, 3).join(" · ");
+}
+
+function akaPreview(text) {
+  const tokens = splitTokens(text, "person");
+  return tokens.slice(0, 3).join(" · ");
+}
+
+function directorsPreview(text) {
+  const tokens = splitTokens(text, "person");
+  return tokens.slice(0, 3).join(" · ");
 }
 
 async function fetchSyncStatus() {
