@@ -322,9 +322,35 @@ input {
   box-shadow: 0 10px 22px rgba(245, 197, 24, 0.2);
 }
 
+.latest-summary {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.latest-thumb {
+  width: 64px;
+  height: auto;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.25);
+  flex: 0 0 auto;
+}
+
+.latest-summary-body {
+  flex: 1;
+  min-width: 0;
+}
+
 .latest-title {
   font-weight: 600;
   margin-bottom: 6px;
+}
+
+.title-sub {
+  font-size: 12px;
+  color: var(--ink-soft);
+  margin-top: -2px;
 }
 
 .latest-detail {
@@ -856,6 +882,10 @@ input {
   .latest-poster {
     max-width: 100%;
     margin: 0 auto;
+  }
+
+  .latest-thumb {
+    width: 56px;
   }
 
   .latest-kv {

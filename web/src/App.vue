@@ -87,8 +87,11 @@
               />
               <div class="tmdb-result-body">
                 <div class="latest-title">
-                  {{ tmdbTitle(item) }}
+                  <span>{{ tmdbTitlePrimary(item) }}</span>
                   <span v-if="item.metadata.release_year">({{ item.metadata.release_year }})</span>
+                </div>
+                <div v-if="tmdbTitleSecondary(item)" class="title-sub">
+                  {{ tmdbTitleSecondary(item) }}
                 </div>
                 <div class="meta">
                   <span v-if="item.metadata.tmdb_id" class="badge">TMDB {{ item.metadata.tmdb_id }}</span>
@@ -190,15 +193,28 @@
             :class="{ active: selectedLatest?.content_uid === item.content_uid }"
             @click="selectLatest(item)"
           >
-            <div class="latest-title">
-              {{ item.title }}
-              <span v-if="item.release_year">({{ item.release_year }})</span>
-            </div>
-            <div class="meta">
-              <span class="badge">TMDB {{ item.tmdb_id }}</span>
-              <span v-if="item.type">{{ item.type }}</span>
-              <span v-if="item.genre">{{ item.genre }}</span>
-              <span v-if="item.updated_at">更新 {{ formatDate(item.updated_at) }}</span>
+            <div class="latest-summary">
+              <img
+                v-if="latestPosterUrl(item)"
+                :src="latestPosterUrl(item)"
+                alt="TMDB Poster"
+                class="latest-thumb"
+              />
+              <div class="latest-summary-body">
+                <div class="latest-title">
+                  {{ latestTitlePrimary(item) }}
+                  <span v-if="item.release_year">({{ item.release_year }})</span>
+                </div>
+                <div v-if="latestTitleSecondary(item)" class="title-sub">
+                  {{ latestTitleSecondary(item) }}
+                </div>
+                <div class="meta">
+                  <span class="badge">TMDB {{ item.tmdb_id }}</span>
+                  <span v-if="item.type">{{ item.type }}</span>
+                  <span v-if="item.genre">{{ item.genre }}</span>
+                  <span v-if="item.updated_at">更新 {{ formatDate(item.updated_at) }}</span>
+                </div>
+              </div>
             </div>
             <div
               v-if="selectedLatest?.content_uid === item.content_uid"
@@ -555,11 +571,60 @@ function tmdbTitle(item) {
   return meta.title || item?.title || meta.original_title || "(无标题)";
 }
 
+function hasCjk(text) {
+  return /[\u4e00-\u9fff]/.test(String(text || ""));
+}
+
+function pickPreferredTitles(title, original) {
+  const primary = String(title || "").trim();
+  const secondary = String(original || "").trim();
+  if (hasCjk(primary)) {
+    return { primary, secondary: primary !== secondary ? secondary : "" };
+  }
+  if (hasCjk(secondary)) {
+    return { primary: secondary, secondary: primary && primary !== secondary ? primary : "" };
+  }
+  if (primary) {
+    return { primary, secondary: primary !== secondary ? secondary : "" };
+  }
+  if (secondary) {
+    return { primary: secondary, secondary: "" };
+  }
+  return { primary: "(无标题)", secondary: "" };
+}
+
+function tmdbTitlePrimary(item) {
+  const meta = item?.metadata || {};
+  return pickPreferredTitles(meta.title || item?.title, meta.original_title || item?.original_title)
+    .primary;
+}
+
+function tmdbTitleSecondary(item) {
+  const meta = item?.metadata || {};
+  return pickPreferredTitles(meta.title || item?.title, meta.original_title || item?.original_title)
+    .secondary;
+}
+
 function tmdbPosterUrl(item) {
   const meta = item?.metadata || {};
   if (meta.poster_url) return String(meta.poster_url);
   if (meta.poster_path) return `https://image.tmdb.org/t/p/w185${meta.poster_path}`;
   return "";
+}
+
+function latestPosterUrl(item) {
+  if (!item) return "";
+  if (item.poster_url) return String(item.poster_url);
+  if (item.poster_path) return `https://image.tmdb.org/t/p/w185${item.poster_path}`;
+  return "";
+}
+
+function latestTitlePrimary(item) {
+  return pickPreferredTitles(item?.title, item?.original_title).primary;
+}
+
+function latestTitleSecondary(item) {
+  return pickPreferredTitles(item?.title, item?.original_title).secondary;
 }
 
 function normalizeInfoHash(raw) {
