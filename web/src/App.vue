@@ -78,8 +78,8 @@
           :ref="(el) => setResultCardRef(item, el)"
           @click="selectItem(item)"
         >
-          <div v-if="item.metadata?.size" class="size-badge">
-            {{ prettySize(item.metadata.size) }}
+          <div v-if="resultSizeText(item)" class="size-badge">
+            {{ resultSizeText(item) }}
           </div>
           <template v-if="isTmdbResult(item)">
             <div class="tmdb-result">
@@ -104,6 +104,9 @@
                   <span v-if="item.metadata.genre">{{ item.metadata.genre }}</span>
                   <span v-if="item.metadata.updated_at">更新 {{ formatDate(item.metadata.updated_at) }}</span>
                 </div>
+                <div v-if="itemMagnetLink(item)" class="result-actions">
+                  <a class="action-btn" :href="itemMagnetLink(item)" @click.stop>直接下载</a>
+                </div>
               </div>
             </div>
           </template>
@@ -119,7 +122,10 @@
             <div class="meta">
               <span v-if="item.metadata.tags">标签: {{ formatList(item.metadata.tags) }}</span>
               <span v-if="item.metadata.video_codec">编码: {{ item.metadata.video_codec }}</span>
-              <span v-if="item.metadata.size">大小: {{ prettySize(item.metadata.size) }}</span>
+              <span v-if="resultSizeText(item)">大小: {{ resultSizeText(item) }}</span>
+            </div>
+            <div v-if="itemMagnetLink(item)" class="result-actions">
+              <a class="action-btn" :href="itemMagnetLink(item)" @click.stop>直接下载</a>
             </div>
           </template>
           <div
@@ -625,6 +631,39 @@ function tmdbPosterUrl(item) {
   if (meta.poster_url) return String(meta.poster_url);
   if (meta.poster_path) return `https://image.tmdb.org/t/p/w185${meta.poster_path}`;
   return "";
+}
+
+function itemMagnetLink(item) {
+  const meta = item?.metadata || {};
+  const infoHash = normalizeInfoHash(meta.info_hash || item?.pg_id);
+  if (!infoHash) return "";
+  const name = encodeURIComponent(item?.title || meta.title || "torrent");
+  return `magnet:?xt=urn:btih:${infoHash}&dn=${name}`;
+}
+
+function getResultSize(item) {
+  const meta = item?.metadata || {};
+  const candidates = [
+    meta.size,
+    meta.total_size,
+    meta.torrent_size,
+    meta.content_size,
+    meta.files_size,
+    meta.file_size,
+    meta.length,
+    item?.size,
+  ];
+  for (const value of candidates) {
+    const num = Number(value);
+    if (Number.isFinite(num) && num > 0) return num;
+  }
+  return null;
+}
+
+function resultSizeText(item) {
+  const size = getResultSize(item);
+  if (!size) return "";
+  return prettySize(size);
 }
 
 function latestPosterUrl(item) {

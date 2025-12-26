@@ -568,6 +568,12 @@ input {
   flex-wrap: wrap;
 }
 
+.result-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .copy-hint {
   padding: 4px 10px;
   border-radius: 999px;
