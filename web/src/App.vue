@@ -51,7 +51,19 @@
           </label>
           <label class="chip">
             最小大小(GB)
-            <input v-model.number="sizeMinGb" type="number" min="0" step="0.1" class="chip-input" />
+            <input
+              v-model.number="sizeMinGb"
+              type="number"
+              min="0"
+              step="0.1"
+              class="chip-input"
+              id="size-min-gb"
+              name="size_min_gb"
+              autocomplete="off"
+              inputmode="decimal"
+              data-1p-ignore
+              data-lpignore="true"
+            />
           </label>
           <label class="chip">
             大小排序
