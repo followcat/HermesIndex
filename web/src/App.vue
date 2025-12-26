@@ -75,6 +75,7 @@
           v-for="item in filteredResults"
           :key="itemKey(item)"
           class="result-card"
+          :ref="(el) => setResultCardRef(item, el)"
           @click="selectItem(item)"
         >
           <div v-if="item.metadata?.size" class="size-badge">
@@ -426,7 +427,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
 
 const apiBase = import.meta.env.VITE_API_BASE || "/api";
 const authToken = ref(localStorage.getItem("auth_token") || "");
@@ -451,6 +452,7 @@ const results = ref([]);
 const selected = ref(null);
 const selectedFiles = ref([]);
 const filesLoading = ref(false);
+const resultCardRefs = new Map();
 const latestTmdb = ref([]);
 const latestLoading = ref(false);
 const selectedLatest = ref(null);
@@ -562,6 +564,16 @@ function resultKey(item) {
   const year = meta.release_year ? String(meta.release_year).trim() : "";
   if (title) return `title:${title}:${year}`;
   return itemKey(item);
+}
+
+function setResultCardRef(item, el) {
+  const key = itemKey(item);
+  if (!key) return;
+  if (el) {
+    resultCardRefs.set(key, el);
+  } else {
+    resultCardRefs.delete(key);
+  }
 }
 
 function isTmdbResult(item) {
@@ -1182,6 +1194,13 @@ function nextPage() {
 function selectItem(item) {
   selected.value = item;
   fetchTorrentFiles(item);
+  nextTick(() => {
+    if (!isMobile.value) return;
+    const el = resultCardRefs.get(itemKey(item));
+    if (el?.scrollIntoView) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  });
 }
 
 function clearSelection() {
