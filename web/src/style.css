@@ -480,6 +480,7 @@ input {
 }
 
 .result-card {
+  position: relative;
   padding: 18px 20px;
   border-radius: 20px;
   background: var(--card);
@@ -489,6 +490,19 @@ input {
   gap: 10px;
   cursor: pointer;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.size-badge {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(18, 18, 18, 0.72);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  backdrop-filter: blur(6px);
 }
 
 .result-card:hover {

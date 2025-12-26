@@ -77,6 +77,9 @@
           class="result-card"
           @click="selectItem(item)"
         >
+          <div v-if="item.metadata?.size" class="size-badge">
+            {{ prettySize(item.metadata.size) }}
+          </div>
           <template v-if="isTmdbResult(item)">
             <div class="tmdb-result">
               <img
