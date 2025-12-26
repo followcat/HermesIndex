@@ -3,6 +3,13 @@ HermesIndex
 
 实现一个离线向量化 + 在线语义搜索的最小可用版本，分为 GPU 推理节点与 CPU 同步/搜索节点。参考 `docs/init.md` 要求。
 
+如果这个项目对你有帮助，欢迎 Star/Watch 支持。
+
+<p align="center">
+  <img src="docs/images/light.jpg" alt="HermesIndex mobile UI (light)" width="280" />
+  <img src="docs/images/dark.jpg" alt="HermesIndex mobile UI (dark)" width="280" />
+</p>
+
 开源许可
 --------
 本项目使用 GPLv3 许可证发布，详情见 `LICENSE`。
