@@ -1,7 +1,7 @@
 HermesIndex
 ===========
 
-实现一个离线向量化 + 在线语义搜索的最小可用版本，分为 GPU 推理节点与 CPU 同步/搜索节点。参考 `docs/init.md` 要求。
+实现一个离线向量化 + 在线语义搜索的最小可用版本，分为 GPU 推理节点与 CPU 同步/搜索节点。
 
 如果这个项目对你有帮助，欢迎 Star/Watch 支持。
 
@@ -9,6 +9,19 @@ HermesIndex
   <img src="docs/images/light.jpg" alt="HermesIndex mobile UI (light)" width="280" />
   <img src="docs/images/dark.jpg" alt="HermesIndex mobile UI (dark)" width="280" />
 </p>
+
+功能与卖点
+----------
+- 离线向量化 + 在线语义检索，适配大规模种子/文件/内容库。
+- GPU/CPU 分离架构：推理可独立扩容，CPU 负责同步、索引与查询。
+- 多数据源配置驱动：表、字段、过滤条件、批大小与并发都可配置。
+- 增量同步与幂等重跑：基于 `updated_at` 与文本哈希，断点续跑友好。
+- TMDB 扩展与内容补全：简介、演员、别名、关键词、类型、海报/背景图。
+- 多模态元数据展示：分辨率、编码、标签、大小、文件列表等。
+- 语义检索增强：短文本清洗、可选查询扩展与关键词回补。
+- 多向量后端：本地 HNSW、Qdrant、Milvus，支持持久化与服务化。
+- 前端开箱即用：搜索结果、详情展开、磁力复制/下载、移动端适配。
+- 认证与用户管理：可选登录、角色区分、Token 管理。
 
 开源许可
 --------
@@ -20,7 +33,6 @@ HermesIndex
 
 目录结构
 --------
-- `docs/init.md`：原始需求说明。
 - `configs/example.yaml`：多数据源配置模板。
 - `src/gpu_service/`：GPU 节点（`core/` 模型与推理，`main.py` FastAPI 入口）。
 - `src/cpu/`：CPU 节点，分层：
