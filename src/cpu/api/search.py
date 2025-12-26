@@ -292,6 +292,33 @@ def extract_query_filters(query: str) -> tuple[str, Dict[str, Any]]:
     return cleaned if cleaned else query, filters
 
 
+def _merge_where(clauses: List[str]) -> str:
+    cleaned = [c.strip() for c in clauses if c and str(c).strip()]
+    if not cleaned:
+        return ""
+    if len(cleaned) == 1:
+        return cleaned[0]
+    return " AND ".join([f"({c})" for c in cleaned])
+
+
+def _safe_identifier(value: str) -> str:
+    return value if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value or "") else ""
+
+
+def _meta_size(meta: Dict[str, Any]) -> float | None:
+    if not meta:
+        return None
+    for key in ("size", "total_size", "torrent_size", "content_size", "files_size", "file_size", "length"):
+        raw = meta.get(key)
+        try:
+            num = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if num > 0:
+            return num
+    return None
+
+
 def expand_query(query: str, extra_terms: Dict[str, int] | None = None) -> str:
     if not query:
         return query
@@ -449,6 +476,8 @@ def search(
     topk: int = Query(20, ge=1, le=100),
     exclude_nsfw: bool = Query(True),
     tmdb_only: bool = Query(False, description="only return items with tmdb_id"),
+    size_min_gb: float | None = Query(None, ge=0, description="min size in GB"),
+    size_sort: str | None = Query(None, description="size sort: asc/desc"),
     page_size: int = Query(20, ge=1, le=100),
     cursor: int = Query(0, ge=0, description="cursor offset for pagination"),
     _: Dict[str, Any] | None = Depends(require_user),
@@ -477,6 +506,10 @@ def search(
             "audio_langs": filters.get("audio_langs"),
             "subtitle_langs": filters.get("subtitle_langs"),
         }
+    size_sort_norm = (size_sort or "").strip().lower()
+    size_min_bytes = None
+    if size_min_gb is not None:
+        size_min_bytes = int(max(size_min_gb, 0) * (1024**3))
     results = vector_store.query(
         np.asarray([query_vec], dtype="float32"),
         topk=fetch_k,
@@ -502,15 +535,23 @@ def search(
         pg_cfg = source_cfg.get("pg", {})
         tmdb_field = pg_cfg.get("tmdb_only_field", "tmdb_id")
         fields = set([pg_cfg.get("id_field"), pg_cfg.get("text_field")] + pg_cfg.get("extra_fields", []))
-        rows_source_cfg = source_cfg
+        where_clauses: List[str] = []
+        base_where = pg_cfg.get("where")
+        if base_where:
+            where_clauses.append(str(base_where))
         if tmdb_only and tmdb_field in fields:
-            rows_source_cfg = {
-                **source_cfg,
-                "pg": {
-                    **pg_cfg,
-                    "where": f"{tmdb_field} IS NOT NULL",
-                },
-            }
+            where_clauses.append(f"{tmdb_field} IS NOT NULL")
+        size_field = _safe_identifier(pg_cfg.get("size_field", "size"))
+        if size_min_bytes and size_field and size_field in fields:
+            where_clauses.append(f"t.{size_field} >= {size_min_bytes}")
+        merged_where = _merge_where(where_clauses)
+        rows_source_cfg = {
+            **source_cfg,
+            "pg": {
+                **pg_cfg,
+                "where": merged_where or pg_cfg.get("where"),
+            },
+        }
         rows = pg_client.fetch_by_ids(rows_source_cfg, ids)
         if pg_cfg.get("keyword_search") and cleaned_query:
             if not tmdb_only or tmdb_field in fields:
@@ -547,6 +588,18 @@ def search(
             )
     enriched.sort(key=lambda x: x.score, reverse=True)
     deduped = _dedupe_search_results(enriched)
+    if size_sort_norm in {"asc", "desc"}:
+        reverse = size_sort_norm == "desc"
+
+        def sort_key(item: SearchResult) -> tuple[int, float, float]:
+            size_val = _meta_size(item.metadata)
+            missing = 1 if size_val is None else 0
+            if size_val is None:
+                size_val = 0.0
+            size_key = -size_val if reverse else size_val
+            return (missing, size_key, -item.score)
+
+        deduped.sort(key=sort_key)
     return {
         "count": len(deduped),
         "next_cursor": next_cursor,
