@@ -78,10 +78,6 @@ def create_content_view(conn: psycopg.Connection, schema: str) -> None:
             CASE WHEN c.source = 'tmdb' THEN c.id ELSE NULL END AS tmdb_id,
             te.genre AS genre,
             te.keywords AS keywords,
-            te.aka AS aka,
-            te.actors AS actors,
-            te.directors AS directors,
-            te.plot AS plot,
             trim(both ' ' from concat_ws(' ',
                 c.title,
                 c.original_title,
@@ -95,7 +91,13 @@ def create_content_view(conn: psycopg.Connection, schema: str) -> None:
                 te.directors,
                 te.plot,
                 te.genre
-            )) AS search_text
+            )) AS search_text,
+            te.aka AS aka,
+            te.actors AS actors,
+            te.directors AS directors,
+            te.plot AS plot,
+            te.raw->>'poster_path' AS poster_path,
+            te.raw->>'backdrop_path' AS backdrop_path
         FROM public.content c
         LEFT JOIN public.content_collections_content ccc
             ON ccc.content_type = c.type
@@ -124,7 +126,9 @@ def create_content_view(conn: psycopg.Connection, schema: str) -> None:
             te.aka,
             te.actors,
             te.directors,
-            te.plot
+            te.plot,
+            te.raw->>'poster_path',
+            te.raw->>'backdrop_path'
         """
     ).format(schema=sql.Identifier(schema))
     with conn.cursor() as cur:
