@@ -5,6 +5,7 @@ CONFIG_PATH=${CONFIG_PATH:-configs/bitmagnet.yaml}
 TMDB_LIMIT=${TMDB_LIMIT:-500}
 SYNC_TARGET=${SYNC_TARGET:-}
 SYNC_SOURCES=${SYNC_SOURCES:-bitmagnet_torrents,bitmagnet_torrent_files,bitmagnet_content}
+SYNC_ALL_ONCE=${SYNC_ALL_ONCE:-false}
 
 if [[ ! -f "$CONFIG_PATH" ]]; then
   echo "Config not found: $CONFIG_PATH" >&2
@@ -15,6 +16,7 @@ echo "Config: $CONFIG_PATH"
 echo "TMDB enrich: loop mode, limit=$TMDB_LIMIT"
 echo "Sync target: ${SYNC_TARGET:-all}"
 echo "Sync sources: ${SYNC_SOURCES}"
+echo "Sync all once: ${SYNC_ALL_ONCE}"
 
 cleanup() {
   if [[ -n "${TMDB_PID:-}" ]] && kill -0 "$TMDB_PID" 2>/dev/null; then
@@ -26,7 +28,9 @@ trap cleanup EXIT
 PYTHONPATH=src python -m cpu.services.tmdb_enrich --config "$CONFIG_PATH" --limit "$TMDB_LIMIT" --loop &
 TMDB_PID=$!
 
-if [[ -n "$SYNC_TARGET" ]]; then
+if [[ "$SYNC_ALL_ONCE" == "true" ]]; then
+  PYTHONPATH=src python -m cpu.services.sync_runner --config "$CONFIG_PATH"
+elif [[ -n "$SYNC_TARGET" ]]; then
   PYTHONPATH=src python -m cpu.services.sync_runner --config "$CONFIG_PATH" --source "$SYNC_TARGET"
 else
   IFS=',' read -r -a source_list <<< "$SYNC_SOURCES"
