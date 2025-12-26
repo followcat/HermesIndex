@@ -528,6 +528,15 @@ input {
   flex-wrap: wrap;
 }
 
+.copy-hint {
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
 .meta {
   display: flex;
   gap: 12px;

@@ -118,6 +118,7 @@
           <div
             v-if="selected && itemKey(selected) === itemKey(item)"
             class="result-detail"
+            @click.stop
           >
             <p class="result-detail-summary">{{ detailSummary }}</p>
             <p class="empty">文件列表：{{ fileListSummary }}</p>
@@ -127,6 +128,7 @@
               </button>
               <a v-if="magnetLink" class="action-btn" :href="magnetLink" @click.stop>直接下载</a>
               <button class="action-btn" @click.stop="clearSelection">清空详情</button>
+              <span v-if="copyMessage" class="copy-hint">{{ copyMessage }}</span>
             </div>
             <div class="file-list" v-if="selectedFiles.length">
               <div v-for="file in selectedFiles" :key="file.index" class="file-item">
@@ -198,7 +200,11 @@
               <span v-if="item.genre">{{ item.genre }}</span>
               <span v-if="item.updated_at">更新 {{ formatDate(item.updated_at) }}</span>
             </div>
-            <div v-if="selectedLatest?.content_uid === item.content_uid" class="latest-detail">
+            <div
+              v-if="selectedLatest?.content_uid === item.content_uid"
+              class="latest-detail"
+              @click.stop
+            >
               <div v-if="latestDetailLoading" class="empty">加载详情...</div>
               <div v-else-if="!latestDetail" class="empty">暂无详情</div>
               <div v-else class="latest-detail-body">
@@ -256,6 +262,7 @@
                         复制磁力链接
                       </button>
                       <a class="action-btn" :href="latestMagnetLink" @click.stop>直接下载</a>
+                      <span v-if="latestCopyMessage" class="copy-hint">{{ latestCopyMessage }}</span>
                     </div>
                     <div class="latest-actions" v-else-if="latestMagnetLoading">
                       <span class="empty">磁力链接加载中...</span>
@@ -433,6 +440,10 @@ const latestDetailLoading = ref(false);
 const latestMagnetLink = ref("");
 const latestMagnetLoading = ref(false);
 const latestMagnetError = ref(false);
+const copyMessage = ref("");
+const latestCopyMessage = ref("");
+let copyMessageTimer = null;
+let latestCopyMessageTimer = null;
 const syncStatus = ref(null);
 const statusLoading = ref(false);
 let statusTimer = null;
@@ -969,13 +980,53 @@ async function fetchLatestMagnet(item) {
   }
 }
 
-async function copyLatestMagnet() {
-  if (!latestMagnetLink.value) return;
+function showCopyMessage(text) {
+  copyMessage.value = text;
+  if (copyMessageTimer) window.clearTimeout(copyMessageTimer);
+  copyMessageTimer = window.setTimeout(() => {
+    copyMessage.value = "";
+  }, 2000);
+}
+
+function showLatestCopyMessage(text) {
+  latestCopyMessage.value = text;
+  if (latestCopyMessageTimer) window.clearTimeout(latestCopyMessageTimer);
+  latestCopyMessageTimer = window.setTimeout(() => {
+    latestCopyMessage.value = "";
+  }, 2000);
+}
+
+async function copyText(text) {
+  if (!text) return false;
+  if (navigator?.clipboard?.writeText && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (err) {
+      console.error(err);
+    }
+  }
   try {
-    await navigator.clipboard.writeText(latestMagnetLink.value);
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.top = "-9999px";
+    document.body.appendChild(textarea);
+    textarea.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(textarea);
+    return ok;
   } catch (err) {
     console.error(err);
+    return false;
   }
+}
+
+async function copyLatestMagnet() {
+  if (!latestMagnetLink.value) return;
+  const ok = await copyText(latestMagnetLink.value);
+  showLatestCopyMessage(ok ? "已复制到剪贴板" : "复制失败");
 }
 
 function searchFromText(text) {
@@ -1036,6 +1087,14 @@ onUnmounted(() => {
     window.clearInterval(statusTimer);
     statusTimer = null;
   }
+  if (copyMessageTimer) {
+    window.clearTimeout(copyMessageTimer);
+    copyMessageTimer = null;
+  }
+  if (latestCopyMessageTimer) {
+    window.clearTimeout(latestCopyMessageTimer);
+    latestCopyMessageTimer = null;
+  }
   teardownMobileQuery();
 });
 function prevPage() {
@@ -1085,11 +1144,8 @@ async function fetchTorrentFiles(item) {
 
 async function copyMagnet() {
   if (!magnetLink.value) return;
-  try {
-    await navigator.clipboard.writeText(magnetLink.value);
-  } catch (err) {
-    console.error(err);
-  }
+  const ok = await copyText(magnetLink.value);
+  showCopyMessage(ok ? "已复制到剪贴板" : "复制失败");
 }
 </script>
 
