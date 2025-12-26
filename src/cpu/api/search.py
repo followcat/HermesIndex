@@ -263,15 +263,13 @@ def extract_query_filters(query: str) -> tuple[str, Dict[str, Any]]:
     lower = raw.lower()
 
     file_type_map = {
-        "视频": "video",
-        "影片": "video",
-        "电影": "video",
-        "音频": "audio",
-        "音乐": "audio",
-        "字幕": "subtitle",
-        "图片": "image",
-        "图片类": "image",
-        "压缩": "archive",
+        "视频文件": "video",
+        "音频文件": "audio",
+        "字幕文件": "subtitle",
+        "图片文件": "image",
+        "图片类文件": "image",
+        "压缩包": "archive",
+        "压缩文件": "archive",
     }
     for key, value in file_type_map.items():
         if key in raw:
