@@ -260,15 +260,22 @@ def run_enrich(config_path: str, limit: int, force: bool, loop: bool) -> None:
     limits = tmdb_cfg.get("limits", {"actors": 10, "directors": 5, "aka": 10})
     sleep_seconds = float(tmdb_cfg.get("sleep_seconds", 1.0))
     timeout = float(tmdb_cfg.get("timeout_seconds", 10))
+    loop_sleep_seconds = float(tmdb_cfg.get("loop_sleep_seconds", 10.0))
+    failed_refs: Set[Tuple[str, str]] = set()
 
     with connect(dsn) as conn:
         with httpx.Client(timeout=timeout) as client:
             while True:
                 refs = fetch_tmdb_refs(conn, schema, limit=limit, force=force)
                 supported = filter_supported_tmdb_refs(refs)
+                if not force and failed_refs:
+                    supported = [ref for ref in supported if ref not in failed_refs]
                 if not supported:
                     logger.info("No tmdb ids to enrich")
-                    return
+                    if not loop:
+                        return
+                    time.sleep(loop_sleep_seconds)
+                    continue
                 logger.info("Enriching tmdb refs: %d", len(supported))
                 for content_type, tmdb_id in supported:
                     try:
@@ -278,6 +285,8 @@ def run_enrich(config_path: str, limit: int, force: bool, loop: bool) -> None:
                         logger.info("Enriched tmdb %s:%s", content_type, tmdb_id)
                     except Exception as exc:
                         logger.warning("Failed tmdb %s:%s error=%s", content_type, tmdb_id, exc)
+                        if not force:
+                            failed_refs.add((content_type, tmdb_id))
                     time.sleep(sleep_seconds)
                 if not loop:
                     return
