@@ -108,7 +108,7 @@ sources:
   #     id_field: "content_uid"
   #     text_field: "search_text"
   #     updated_at_field: "updated_at"
-  #     extra_fields: ["title", "original_title", "overview", "type", "source", "id", "adult", "release_year", "tmdb_id", "genre", "keywords"]
+  #     extra_fields: ["title", "original_title", "overview", "type", "source", "id", "adult", "release_year", "tmdb_id", "genre", "aka", "keywords", "actors", "directors", "plot"]
   #     tmdb_enrich: true
   #     keyword_search: true
   #     keyword_fields: ["title", "original_title", "overview"]
