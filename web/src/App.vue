@@ -24,15 +24,22 @@
           </button>
         </div>
         <p>向量化搜索你的种子、文件与内容库。支持 TMDB 扩展与 Qdrant 检索。</p>
-        <div class="search-bar">
+        <form class="search-bar" autocomplete="off" @submit.prevent="runSearch(true)">
           <input
             v-model="query"
-            type="text"
+            type="search"
+            name="search-query"
+            autocomplete="off"
+            inputmode="search"
+            aria-autocomplete="none"
+            autocorrect="off"
+            autocapitalize="off"
+            spellcheck="false"
             placeholder="输入关键词，例如电影名、别名或演员"
             @keyup.enter="runSearch(true)"
           />
-          <button @click="runSearch(true)" :disabled="loading">{{ loading ? "搜索中..." : "搜索" }}</button>
-        </div>
+          <button type="submit" :disabled="loading">{{ loading ? "搜索中..." : "搜索" }}</button>
+        </form>
         <div class="filters">
           <label class="chip">
             <input v-model="excludeNsfw" type="checkbox" />
@@ -484,9 +491,22 @@ const latestTitleSummary = computed(() => {
   return detail.title || selectedLatest.value?.title || "未命名";
 });
 
+const fileListTotalSize = computed(() => {
+  if (!selectedFiles.value.length) return "";
+  let total = 0;
+  for (const file of selectedFiles.value) {
+    const size = Number(file?.size || 0);
+    if (Number.isFinite(size) && size > 0) total += size;
+  }
+  if (!Number.isFinite(total) || total <= 0) return "";
+  return prettySize(total);
+});
+
 const fileListSummary = computed(() => {
   if (filesLoading.value) return "加载中...";
   if (!selectedFiles.value.length) return "暂无文件列表";
+  const total = fileListTotalSize.value;
+  if (total) return `${selectedFiles.value.length} 个文件 · 合计 ${total}`;
   return `${selectedFiles.value.length} 个文件`;
 });
 
