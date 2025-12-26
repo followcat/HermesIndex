@@ -17,7 +17,12 @@
   <div v-else class="page">
     <section>
       <div class="hero">
-        <h1>HermesIndex</h1>
+        <div class="hero-title">
+          <h1>HermesIndex</h1>
+          <button class="theme-toggle" @click="toggleTheme">
+            {{ themeLabel }}
+          </button>
+        </div>
         <p>向量化搜索你的种子、文件与内容库。支持 TMDB 扩展与 Qdrant 检索。</p>
         <div class="search-bar">
           <input
@@ -65,18 +70,68 @@
           class="result-card"
           @click="selectItem(item)"
         >
-          <h3>{{ item.title || "(无标题)" }}</h3>
-          <div class="meta">
-            <span class="badge">{{ item.source }}</span>
-            <span>相似度 {{ item.score.toFixed(3) }}</span>
-            <span v-if="item.metadata.release_year">{{ item.metadata.release_year }}</span>
-            <span v-if="item.metadata.video_resolution">{{ item.metadata.video_resolution }}</span>
-            <span v-if="item.metadata.collection_names">{{ formatList(item.metadata.collection_names) }}</span>
-          </div>
-          <div class="meta">
-            <span v-if="item.metadata.tags">标签: {{ formatList(item.metadata.tags) }}</span>
-            <span v-if="item.metadata.video_codec">编码: {{ item.metadata.video_codec }}</span>
-            <span v-if="item.metadata.size">大小: {{ prettySize(item.metadata.size) }}</span>
+          <template v-if="isTmdbResult(item)">
+            <div class="latest-title">
+              {{ tmdbTitle(item) }}
+              <span v-if="item.metadata.release_year">({{ item.metadata.release_year }})</span>
+            </div>
+            <div class="meta">
+              <span v-if="item.metadata.tmdb_id" class="badge">TMDB {{ item.metadata.tmdb_id }}</span>
+              <span v-else class="badge">{{ item.source }}</span>
+              <span v-if="item.metadata.type">{{ item.metadata.type }}</span>
+              <span v-if="item.metadata.genre">{{ item.metadata.genre }}</span>
+              <span v-if="item.metadata.updated_at">更新 {{ formatDate(item.metadata.updated_at) }}</span>
+            </div>
+          </template>
+          <template v-else>
+            <h3>{{ item.title || "(无标题)" }}</h3>
+            <div class="meta">
+              <span class="badge">{{ item.source }}</span>
+              <span>相似度 {{ item.score.toFixed(3) }}</span>
+              <span v-if="item.metadata.release_year">{{ item.metadata.release_year }}</span>
+              <span v-if="item.metadata.video_resolution">{{ item.metadata.video_resolution }}</span>
+              <span v-if="item.metadata.collection_names">{{ formatList(item.metadata.collection_names) }}</span>
+            </div>
+            <div class="meta">
+              <span v-if="item.metadata.tags">标签: {{ formatList(item.metadata.tags) }}</span>
+              <span v-if="item.metadata.video_codec">编码: {{ item.metadata.video_codec }}</span>
+              <span v-if="item.metadata.size">大小: {{ prettySize(item.metadata.size) }}</span>
+            </div>
+          </template>
+          <div
+            v-if="selected && itemKey(selected) === itemKey(item)"
+            class="result-detail"
+          >
+            <p class="result-detail-summary">{{ detailSummary }}</p>
+            <p class="empty">文件列表：{{ fileListSummary }}</p>
+            <div class="actions">
+              <button class="action-btn primary" @click.stop="copyMagnet" :disabled="!magnetLink">
+                复制磁力链接
+              </button>
+              <a v-if="magnetLink" class="action-btn" :href="magnetLink" @click.stop>直接下载</a>
+              <button class="action-btn" @click.stop="clearSelection">清空详情</button>
+            </div>
+            <div class="file-list" v-if="selectedFiles.length">
+              <div v-for="file in selectedFiles" :key="file.index" class="file-item">
+                <span class="file-index">#{{ file.index }}</span>
+                <span class="file-path">{{ file.path }}</span>
+                <span class="file-size">{{ prettySize(file.size) }}</span>
+              </div>
+            </div>
+            <div class="kv-collapses">
+              <details v-if="selected.metadata.actors" class="kv-collapse">
+                <summary>演员</summary>
+                <div class="kv-collapse-body">{{ selected.metadata.actors }}</div>
+              </details>
+              <details v-if="selected.metadata.aka" class="kv-collapse">
+                <summary>别名</summary>
+                <div class="kv-collapse-body">{{ selected.metadata.aka }}</div>
+              </details>
+              <details v-if="selected.metadata.keywords" class="kv-collapse">
+                <summary>关键词</summary>
+                <div class="kv-collapse-body">{{ selected.metadata.keywords }}</div>
+              </details>
+            </div>
           </div>
         </article>
       </div>
@@ -111,89 +166,99 @@
             <div v-if="selectedLatest?.content_uid === item.content_uid" class="latest-detail">
               <div v-if="latestDetailLoading" class="empty">加载详情...</div>
               <div v-else-if="!latestDetail" class="empty">暂无详情</div>
-          <div v-else class="latest-detail-body">
-              <div class="latest-detail-grid">
-                <div v-if="latestDetail.poster_url" class="latest-poster">
-                  <img :src="latestDetail.poster_url" alt="TMDB Poster" />
-                </div>
-                <div class="latest-detail-info">
-                  <div class="latest-kv">
-                    <span v-if="latestDetail.type" class="kv-key">类型</span>
-                    <div v-if="latestDetail.type" class="kv-value">
-                      <button class="link-btn" @click="searchFromText(latestDetail.type)">
-                        {{ latestDetail.type }}
-                      </button>
-                    </div>
-                    <span v-if="latestDetail.genre" class="kv-key">风格</span>
-                    <div v-if="latestDetail.genre" class="kv-value">
-                      <div class="tag-list">
-                        <button
-                          v-for="(token, idx) in splitTokens(latestDetail.genre, 'default')"
-                          :key="`genre-${idx}-${token}`"
-                          class="link-btn tag-btn"
-                          @click="searchFromText(token)"
-                        >
-                          {{ token }}
-                        </button>
-                      </div>
-                    </div>
-                    <span v-if="latestDetail.directors" class="kv-key">导演</span>
-                    <div v-if="latestDetail.directors" class="kv-value">
-                      <div class="tag-list">
-                        <button
-                          v-for="(token, idx) in splitTokens(latestDetail.directors, 'person')"
-                          :key="`directors-${idx}-${token}`"
-                          class="link-btn tag-btn"
-                          @click="searchFromText(token)"
-                        >
-                          {{ token }}
-                        </button>
-                      </div>
-                    </div>
-                    <span v-if="latestDetail.actors" class="kv-key">演员</span>
-                    <div v-if="latestDetail.actors" class="kv-value">
-                      <div class="tag-list">
-                        <button
-                          v-for="(token, idx) in splitTokens(latestDetail.actors, 'person')"
-                          :key="`actors-${idx}-${token}`"
-                          class="link-btn tag-btn"
-                          @click="searchFromText(token)"
-                        >
-                          {{ token }}
-                        </button>
-                      </div>
-                    </div>
-                    <span v-if="latestDetail.aka" class="kv-key">别名</span>
-                    <div v-if="latestDetail.aka" class="kv-value">
-                      <div class="tag-list">
-                        <button
-                          v-for="(token, idx) in splitTokens(latestDetail.aka, 'person')"
-                          :key="`aka-${idx}-${token}`"
-                          class="link-btn tag-btn"
-                          @click="searchFromText(token)"
-                        >
-                          {{ token }}
-                        </button>
-                      </div>
-                    </div>
-                    <span v-if="latestDetail.keywords" class="kv-key">关键词</span>
-                    <div v-if="latestDetail.keywords" class="kv-value">
-                      <div class="tag-list">
-                        <button
-                          v-for="(token, idx) in splitTokens(latestDetail.keywords, 'default')"
-                          :key="`keywords-${idx}-${token}`"
-                          class="link-btn tag-btn"
-                          @click="searchFromText(token)"
-                        >
-                          {{ token }}
-                        </button>
-                      </div>
-                    </div>
+              <div v-else class="latest-detail-body">
+                <div class="latest-detail-grid">
+                  <div v-if="latestDetail.poster_url" class="latest-poster">
+                    <img :src="latestDetail.poster_url" alt="TMDB Poster" />
                   </div>
-                  <p v-if="latestDetail.plot" class="latest-detail-plot">{{ latestDetail.plot }}</p>
+                  <div class="latest-detail-info">
+                    <details v-if="latestDetail.type" class="latest-kv" :open="!isMobile">
+                      <summary>类型</summary>
+                      <div class="kv-value">
+                        <button class="link-btn" @click="searchFromText(latestDetail.type)">
+                          {{ latestDetail.type }}
+                        </button>
+                      </div>
+                    </details>
+                    <details v-if="latestDetail.genre" class="latest-kv" :open="!isMobile">
+                      <summary>风格</summary>
+                      <div class="kv-value">
+                        <div class="tag-list">
+                          <button
+                            v-for="(token, idx) in splitTokens(latestDetail.genre, 'default')"
+                            :key="`genre-${idx}-${token}`"
+                            class="link-btn tag-btn"
+                            @click="searchFromText(token)"
+                          >
+                            {{ token }}
+                          </button>
+                        </div>
+                      </div>
+                    </details>
+                    <details v-if="latestDetail.directors" class="latest-kv" :open="!isMobile">
+                      <summary>导演</summary>
+                      <div class="kv-value">
+                        <div class="tag-list">
+                          <button
+                            v-for="(token, idx) in splitTokens(latestDetail.directors, 'person')"
+                            :key="`directors-${idx}-${token}`"
+                            class="link-btn tag-btn"
+                            @click="searchFromText(token)"
+                          >
+                            {{ token }}
+                          </button>
+                        </div>
+                      </div>
+                    </details>
+                    <details v-if="latestDetail.actors" class="latest-kv" :open="!isMobile">
+                      <summary>演员</summary>
+                      <div class="kv-value">
+                        <div class="tag-list">
+                          <button
+                            v-for="(token, idx) in splitTokens(latestDetail.actors, 'person')"
+                            :key="`actors-${idx}-${token}`"
+                            class="link-btn tag-btn"
+                            @click="searchFromText(token)"
+                          >
+                            {{ token }}
+                          </button>
+                        </div>
+                      </div>
+                    </details>
+                    <details v-if="latestDetail.aka" class="latest-kv" :open="!isMobile">
+                      <summary>别名</summary>
+                      <div class="kv-value">
+                        <div class="tag-list">
+                          <button
+                            v-for="(token, idx) in splitTokens(latestDetail.aka, 'person')"
+                            :key="`aka-${idx}-${token}`"
+                            class="link-btn tag-btn"
+                            @click="searchFromText(token)"
+                          >
+                            {{ token }}
+                          </button>
+                        </div>
+                      </div>
+                    </details>
+                    <details v-if="latestDetail.keywords" class="latest-kv" :open="!isMobile">
+                      <summary>关键词</summary>
+                      <div class="kv-value">
+                        <div class="tag-list">
+                          <button
+                            v-for="(token, idx) in splitTokens(latestDetail.keywords, 'default')"
+                            :key="`keywords-${idx}-${token}`"
+                            class="link-btn tag-btn"
+                            @click="searchFromText(token)"
+                          >
+                            {{ token }}
+                          </button>
+                        </div>
+                      </div>
+                    </details>
+                    <p v-if="latestDetail.plot" class="latest-detail-plot">{{ latestDetail.plot }}</p>
+                  </div>
                 </div>
               </div>
-            </div>
             </div>
           </div>
         </div>
@@ -201,61 +266,63 @@
     </section>
 
     <aside class="detail">
-      <template v-if="selected">
-        <h2>{{ selected.title || "未命名" }}</h2>
-        <p>{{ detailSummary }}</p>
-        <p class="empty">文件列表：{{ fileListSummary }}</p>
-        <div class="actions">
-          <button class="action-btn primary" @click="copyMagnet" :disabled="!magnetLink">
-            复制磁力链接
-          </button>
-          <a v-if="magnetLink" class="action-btn" :href="magnetLink">直接下载</a>
-          <button class="action-btn" @click="clearSelection">清空详情</button>
-        </div>
-        <div class="file-list" v-if="selectedFiles.length">
-          <div v-for="file in selectedFiles" :key="file.index" class="file-item">
-            <span class="file-index">#{{ file.index }}</span>
-            <span class="file-path">{{ file.path }}</span>
-            <span class="file-size">{{ prettySize(file.size) }}</span>
+      <div class="detail-body">
+        <template v-if="selected">
+          <h2>{{ selected.title || "未命名" }}</h2>
+          <p>{{ detailSummary }}</p>
+          <p class="empty">文件列表：{{ fileListSummary }}</p>
+          <div class="actions">
+            <button class="action-btn primary" @click="copyMagnet" :disabled="!magnetLink">
+              复制磁力链接
+            </button>
+            <a v-if="magnetLink" class="action-btn" :href="magnetLink">直接下载</a>
+            <button class="action-btn" @click="clearSelection">清空详情</button>
           </div>
-        </div>
-        <div class="kv">
-          <span>来源</span>
-          <div>{{ selected.source }}</div>
-          <span>PG ID</span>
-          <div class="mono">{{ selected.pg_id }}</div>
-          <span v-if="selected.metadata.tmdb_id">TMDB</span>
-          <div v-if="selected.metadata.tmdb_id">{{ selected.metadata.tmdb_id }}</div>
-          <span v-if="selected.metadata.release_year">年份</span>
-          <div v-if="selected.metadata.release_year">{{ selected.metadata.release_year }}</div>
-          <span v-if="selected.metadata.video_resolution">分辨率</span>
-          <div v-if="selected.metadata.video_resolution">{{ selected.metadata.video_resolution }}</div>
-          <span v-if="selected.metadata.video_codec">编码</span>
-          <div v-if="selected.metadata.video_codec">{{ selected.metadata.video_codec }}</div>
-          <span v-if="selected.metadata.tags">标签</span>
-          <div v-if="selected.metadata.tags">{{ formatList(selected.metadata.tags) }}</div>
-          <span v-if="selected.metadata.directors">导演</span>
-          <div v-if="selected.metadata.directors">{{ selected.metadata.directors }}</div>
-        </div>
-        <div class="kv-collapses">
-          <details v-if="selected.metadata.actors" class="kv-collapse">
-            <summary>演员</summary>
-            <div class="kv-collapse-body">{{ selected.metadata.actors }}</div>
-          </details>
-          <details v-if="selected.metadata.aka" class="kv-collapse">
-            <summary>别名</summary>
-            <div class="kv-collapse-body">{{ selected.metadata.aka }}</div>
-          </details>
-          <details v-if="selected.metadata.keywords" class="kv-collapse">
-            <summary>关键词</summary>
-            <div class="kv-collapse-body">{{ selected.metadata.keywords }}</div>
-          </details>
-        </div>
-      </template>
-      <template v-else>
-        <h2>详情</h2>
-        <p class="empty">选择一条结果查看详情与磁力下载。</p>
-      </template>
+          <div class="file-list" v-if="selectedFiles.length">
+            <div v-for="file in selectedFiles" :key="file.index" class="file-item">
+              <span class="file-index">#{{ file.index }}</span>
+              <span class="file-path">{{ file.path }}</span>
+              <span class="file-size">{{ prettySize(file.size) }}</span>
+            </div>
+          </div>
+          <div class="kv">
+            <span>来源</span>
+            <div>{{ selected.source }}</div>
+            <span>PG ID</span>
+            <div class="mono">{{ selected.pg_id }}</div>
+            <span v-if="selected.metadata.tmdb_id">TMDB</span>
+            <div v-if="selected.metadata.tmdb_id">{{ selected.metadata.tmdb_id }}</div>
+            <span v-if="selected.metadata.release_year">年份</span>
+            <div v-if="selected.metadata.release_year">{{ selected.metadata.release_year }}</div>
+            <span v-if="selected.metadata.video_resolution">分辨率</span>
+            <div v-if="selected.metadata.video_resolution">{{ selected.metadata.video_resolution }}</div>
+            <span v-if="selected.metadata.video_codec">编码</span>
+            <div v-if="selected.metadata.video_codec">{{ selected.metadata.video_codec }}</div>
+            <span v-if="selected.metadata.tags">标签</span>
+            <div v-if="selected.metadata.tags">{{ formatList(selected.metadata.tags) }}</div>
+            <span v-if="selected.metadata.directors">导演</span>
+            <div v-if="selected.metadata.directors">{{ selected.metadata.directors }}</div>
+          </div>
+          <div class="kv-collapses">
+            <details v-if="selected.metadata.actors" class="kv-collapse">
+              <summary>演员</summary>
+              <div class="kv-collapse-body">{{ selected.metadata.actors }}</div>
+            </details>
+            <details v-if="selected.metadata.aka" class="kv-collapse">
+              <summary>别名</summary>
+              <div class="kv-collapse-body">{{ selected.metadata.aka }}</div>
+            </details>
+            <details v-if="selected.metadata.keywords" class="kv-collapse">
+              <summary>关键词</summary>
+              <div class="kv-collapse-body">{{ selected.metadata.keywords }}</div>
+            </details>
+          </div>
+        </template>
+        <template v-else>
+          <h2>详情</h2>
+          <p class="empty">选择一条结果查看详情与磁力下载。</p>
+        </template>
+      </div>
       <div v-if="isAuthenticated" class="password-panel">
         <h3>修改密码</h3>
         <div class="admin-actions">
@@ -336,6 +403,10 @@ const apiBase = import.meta.env.VITE_API_BASE || "/api";
 const authToken = ref(localStorage.getItem("auth_token") || "");
 const authRequired = ref(true);
 const currentUser = ref(null);
+const theme = ref(localStorage.getItem("theme") || "dark");
+const isMobile = ref(false);
+let mobileQuery = null;
+let mobileQueryHandler = null;
 const authLoading = ref(false);
 const authError = ref("");
 const loginForm = ref({ username: "", password: "" });
@@ -345,7 +416,7 @@ const cursor = ref(0);
 const nextCursor = ref(null);
 const cursorStack = ref([]);
 const excludeNsfw = ref(true);
-const tmdbOnly = ref(false);
+const tmdbOnly = ref(true);
 const loading = ref(false);
 const results = ref([]);
 const selected = ref(null);
@@ -388,11 +459,12 @@ const filteredResults = computed(() => {
 });
 const isAuthenticated = computed(() => !authRequired.value || !!authToken.value);
 const isAdmin = computed(() => currentUser.value?.role === "admin");
+const themeLabel = computed(() => (theme.value === "dark" ? "浅色" : "深色"));
 
 const detailSummary = computed(() => {
   if (!selected.value) return "";
   const meta = selected.value.metadata || {};
-  return meta.overview || meta.hint_title || meta.title || "暂无简介";
+  return meta.plot || meta.overview || meta.hint_title || meta.title || "暂无简介";
 });
 
 const fileListSummary = computed(() => {
@@ -423,6 +495,16 @@ function resultKey(item) {
   const year = meta.release_year ? String(meta.release_year).trim() : "";
   if (title) return `title:${title}:${year}`;
   return itemKey(item);
+}
+
+function isTmdbResult(item) {
+  const meta = item?.metadata || {};
+  return Boolean(meta.tmdb_id || meta.source === "tmdb" || item?.source === "tmdb");
+}
+
+function tmdbTitle(item) {
+  const meta = item?.metadata || {};
+  return meta.title || item?.title || meta.original_title || "(无标题)";
 }
 
 function normalizeInfoHash(raw) {
@@ -464,6 +546,43 @@ async function apiFetch(url, options = {}) {
     currentUser.value = null;
   }
   return resp;
+}
+
+function applyTheme(value) {
+  const next = value === "light" ? "light" : "dark";
+  theme.value = next;
+  localStorage.setItem("theme", next);
+  document.documentElement.setAttribute("data-theme", next);
+}
+
+function toggleTheme() {
+  applyTheme(theme.value === "dark" ? "light" : "dark");
+}
+
+function setupMobileQuery() {
+  if (typeof window === "undefined" || !window.matchMedia) return;
+  mobileQuery = window.matchMedia("(max-width: 900px)");
+  const update = () => {
+    isMobile.value = mobileQuery.matches;
+  };
+  mobileQueryHandler = update;
+  update();
+  if (mobileQuery.addEventListener) {
+    mobileQuery.addEventListener("change", update);
+  } else if (mobileQuery.addListener) {
+    mobileQuery.addListener(update);
+  }
+}
+
+function teardownMobileQuery() {
+  if (!mobileQuery || !mobileQueryHandler) return;
+  if (mobileQuery.removeEventListener) {
+    mobileQuery.removeEventListener("change", mobileQueryHandler);
+  } else if (mobileQuery.removeListener) {
+    mobileQuery.removeListener(mobileQueryHandler);
+  }
+  mobileQuery = null;
+  mobileQueryHandler = null;
 }
 
 async function loadMe() {
@@ -778,6 +897,8 @@ async function fetchSyncStatus() {
 }
 
 onMounted(() => {
+  applyTheme(theme.value);
+  setupMobileQuery();
   loadMe();
 });
 
@@ -786,6 +907,7 @@ onUnmounted(() => {
     window.clearInterval(statusTimer);
     statusTimer = null;
   }
+  teardownMobileQuery();
 });
 function prevPage() {
   if (!cursorStack.value.length) return;
