@@ -192,6 +192,21 @@ def filter_missing_tmdb_refs(
     return [ref for ref in unique if ref not in existing]
 
 
+def filter_supported_tmdb_refs(
+    refs: Iterable[Tuple[str, str]],
+) -> List[Tuple[str, str]]:
+    filtered: List[Tuple[str, str]] = []
+    unsupported: Set[str] = set()
+    for content_type, tmdb_id in refs:
+        if content_type in TMDB_TYPES:
+            filtered.append((content_type, tmdb_id))
+        else:
+            unsupported.add(content_type)
+    for content_type in sorted(unsupported):
+        logger.info("Skip tmdb enrichment for unsupported type: %s", content_type)
+    return filtered
+
+
 def ensure_tmdb_enrichment(
     conn: psycopg.Connection,
     schema: str,
@@ -200,7 +215,10 @@ def ensure_tmdb_enrichment(
 ) -> None:
     if not tmdb_cfg.get("enabled") or not tmdb_cfg.get("auto_enrich"):
         return
-    missing = filter_missing_tmdb_refs(conn, schema, tmdb_refs)
+    supported = filter_supported_tmdb_refs(tmdb_refs)
+    if not supported:
+        return
+    missing = filter_missing_tmdb_refs(conn, schema, supported)
     if not missing:
         return
     max_per_batch = int(tmdb_cfg.get("max_per_batch", 50))
@@ -247,11 +265,12 @@ def run_enrich(config_path: str, limit: int, force: bool, loop: bool) -> None:
         with httpx.Client(timeout=timeout) as client:
             while True:
                 refs = fetch_tmdb_refs(conn, schema, limit=limit, force=force)
-                if not refs:
+                supported = filter_supported_tmdb_refs(refs)
+                if not supported:
                     logger.info("No tmdb ids to enrich")
                     return
-                logger.info("Enriching tmdb refs: %d", len(refs))
-                for content_type, tmdb_id in refs:
+                logger.info("Enriching tmdb refs: %d", len(supported))
+                for content_type, tmdb_id in supported:
                     try:
                         payload = fetch_tmdb_payload(client, base_url, api_key, content_type, tmdb_id, language)
                         values = normalize_tmdb_payload(payload, limits)
