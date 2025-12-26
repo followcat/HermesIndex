@@ -66,6 +66,7 @@ sources:
       text_field: "REPLACE_TEXT_FIELD"
       # updated_at_field: "updated_at"
       # extra_fields: ["size", "private", "files_count", "extension"]
+      # size_field: "size"
       # Optional joins for tags/hints. Non-agg join fields assume 1:1.
       # joins:
       #   - table: "torrent_tags"

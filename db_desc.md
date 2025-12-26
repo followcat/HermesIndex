@@ -16,6 +16,7 @@ Bitmagnet 数据库可用数据总结
 - 文本字段：`name`
 - 增量字段：`updated_at`
 - 推荐 extra_fields：`size`, `private`, `files_count`, `extension`
+- 可选 size_field：`size`（用于容量过滤/排序）
 - 适用：种子标题检索、主入口检索
 
 2) torrent_files（文件级）
