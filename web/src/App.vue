@@ -49,6 +49,18 @@
             <input v-model="tmdbOnly" type="checkbox" />
             仅 TMDB 记录
           </label>
+          <label class="chip">
+            最小大小(GB)
+            <input v-model.number="sizeMinGb" type="number" min="0" step="0.1" class="chip-input" />
+          </label>
+          <label class="chip">
+            大小排序
+            <select v-model="sizeSort" class="chip-select">
+              <option value="">默认</option>
+              <option value="desc">从大到小</option>
+              <option value="asc">从小到大</option>
+            </select>
+          </label>
           <span class="chip">每页: {{ pageSize }}</span>
           <input v-model.number="pageSize" type="range" min="5" max="50" />
         </div>
@@ -78,9 +90,6 @@
           :ref="(el) => setResultCardRef(item, el)"
           @click="selectItem(item)"
         >
-          <div v-if="resultSizeText(item)" class="size-badge">
-            {{ resultSizeText(item) }}
-          </div>
           <template v-if="isTmdbResult(item)">
             <div class="tmdb-result">
               <img
@@ -91,6 +100,7 @@
               />
               <div class="tmdb-result-body">
                 <div class="latest-title">
+                  <span v-if="resultSizeText(item)" class="size-pill">{{ resultSizeText(item) }}</span>
                   <span>{{ tmdbTitlePrimary(item) }}</span>
                   <span v-if="item.metadata.release_year">({{ item.metadata.release_year }})</span>
                 </div>
@@ -111,7 +121,10 @@
             </div>
           </template>
           <template v-else>
-            <h3>{{ item.title || "(无标题)" }}</h3>
+            <h3>
+              <span v-if="resultSizeText(item)" class="size-pill">{{ resultSizeText(item) }}</span>
+              <span>{{ item.title || "(无标题)" }}</span>
+            </h3>
             <div class="meta">
               <span class="badge">{{ item.source }}</span>
               <span>相似度 {{ item.score.toFixed(3) }}</span>
@@ -453,6 +466,8 @@ const nextCursor = ref(null);
 const cursorStack = ref([]);
 const excludeNsfw = ref(true);
 const tmdbOnly = ref(true);
+const sizeMinGb = ref(0);
+const sizeSort = ref("");
 const loading = ref(false);
 const results = ref([]);
 const selected = ref(null);
@@ -948,6 +963,12 @@ async function runSearch(resetPage = false) {
       page_size: String(pageSize.value),
       cursor: String(cursor.value || 0),
     });
+    if (sizeMinGb.value && sizeMinGb.value > 0) {
+      params.set("size_min_gb", String(sizeMinGb.value));
+    }
+    if (sizeSort.value) {
+      params.set("size_sort", sizeSort.value);
+    }
     const resp = await apiFetch(`${apiBase}/search?${params.toString()}`);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();

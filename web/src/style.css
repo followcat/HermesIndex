@@ -270,6 +270,23 @@ input {
   font-weight: 600;
 }
 
+.chip-input,
+.chip-select {
+  margin-left: 6px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.chip-input {
+  width: 72px;
+}
+
+.chip-select {
+  cursor: pointer;
+}
+
 .results {
   margin-top: 24px;
   display: grid;
@@ -480,7 +497,6 @@ input {
 }
 
 .result-card {
-  position: relative;
   padding: 18px 20px;
   border-radius: 20px;
   background: var(--card);
@@ -492,16 +508,16 @@ input {
   transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
-.size-badge {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  padding: 4px 8px;
+.size-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
   border-radius: 999px;
   background: rgba(18, 18, 18, 0.72);
   color: #fff;
   font-size: 11px;
   font-weight: 600;
+  margin-right: 8px;
   backdrop-filter: blur(6px);
 }
 
