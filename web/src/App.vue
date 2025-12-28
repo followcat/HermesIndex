@@ -458,7 +458,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 
 const apiBase = import.meta.env.VITE_API_BASE || "/api";
 const authToken = ref(localStorage.getItem("auth_token") || "");
@@ -508,6 +508,8 @@ const newUser = ref({ username: "", password: "", role: "user" });
 const pwdForm = ref({ old_password: "", new_password: "" });
 const pwdLoading = ref(false);
 const pwdMessage = ref("");
+const SEARCH_STATE_KEY = "hermes_search_state";
+let saveSearchTimer = null;
 
 const emptyMessage = computed(() => {
   if (loading.value) return "搜索中...";
@@ -764,6 +766,61 @@ function applyTheme(value) {
     appRoot.setAttribute("data-theme", next);
     appRoot.classList.toggle("theme-light", next === "light");
   }
+}
+
+function saveSearchState() {
+  if (typeof localStorage === "undefined") return;
+  const state = {
+    query: query.value,
+    results: results.value,
+    cursor: cursor.value,
+    nextCursor: nextCursor.value,
+    cursorStack: cursorStack.value,
+    excludeNsfw: excludeNsfw.value,
+    tmdbOnly: tmdbOnly.value,
+    sizeMinGb: sizeMinGb.value,
+    sizeSort: sizeSort.value,
+    pageSize: pageSize.value,
+    selectedKey: selected.value ? itemKey(selected.value) : "",
+  };
+  try {
+    localStorage.setItem(SEARCH_STATE_KEY, JSON.stringify(state));
+  } catch (err) {
+    console.warn("Failed to persist search state", err);
+  }
+}
+
+function restoreSearchState() {
+  if (typeof localStorage === "undefined") return;
+  try {
+    const raw = localStorage.getItem(SEARCH_STATE_KEY);
+    if (!raw) return;
+    const state = JSON.parse(raw);
+    if (typeof state.query === "string") query.value = state.query;
+    if (Array.isArray(state.results)) results.value = state.results;
+    if (Array.isArray(state.cursorStack)) cursorStack.value = state.cursorStack;
+    if (typeof state.cursor === "number") cursor.value = state.cursor;
+    if (state.nextCursor !== undefined) nextCursor.value = state.nextCursor;
+    if (typeof state.excludeNsfw === "boolean") excludeNsfw.value = state.excludeNsfw;
+    if (typeof state.tmdbOnly === "boolean") tmdbOnly.value = state.tmdbOnly;
+    if (typeof state.sizeMinGb === "number") sizeMinGb.value = state.sizeMinGb;
+    if (typeof state.sizeSort === "string") sizeSort.value = state.sizeSort;
+    if (typeof state.pageSize === "number") pageSize.value = state.pageSize;
+    if (state.selectedKey && Array.isArray(state.results)) {
+      const match = state.results.find((item) => itemKey(item) === state.selectedKey);
+      if (match) {
+        selected.value = match;
+        fetchTorrentFiles(match);
+      }
+    }
+  } catch (err) {
+    console.warn("Failed to restore search state", err);
+  }
+}
+
+function scheduleSearchStateSave() {
+  if (saveSearchTimer) window.clearTimeout(saveSearchTimer);
+  saveSearchTimer = window.setTimeout(saveSearchState, 200);
 }
 
 function toggleTheme() {
@@ -1229,9 +1286,13 @@ async function fetchSyncStatus() {
 }
 
 onMounted(() => {
+  restoreSearchState();
   applyTheme(theme.value);
   setupMobileQuery();
   loadMe();
+  if (typeof window !== "undefined") {
+    window.addEventListener("pagehide", saveSearchState);
+  }
 });
 
 onUnmounted(() => {
@@ -1247,8 +1308,33 @@ onUnmounted(() => {
     window.clearTimeout(latestCopyMessageTimer);
     latestCopyMessageTimer = null;
   }
+  if (saveSearchTimer) {
+    window.clearTimeout(saveSearchTimer);
+    saveSearchTimer = null;
+  }
+  if (typeof window !== "undefined") {
+    window.removeEventListener("pagehide", saveSearchState);
+  }
   teardownMobileQuery();
 });
+
+watch(
+  [
+    query,
+    results,
+    cursor,
+    nextCursor,
+    cursorStack,
+    excludeNsfw,
+    tmdbOnly,
+    sizeMinGb,
+    sizeSort,
+    pageSize,
+    computed(() => (selected.value ? itemKey(selected.value) : "")),
+  ],
+  scheduleSearchStateSave,
+  { deep: true }
+);
 function prevPage() {
   if (!cursorStack.value.length) return;
   cursor.value = cursorStack.value.pop();
