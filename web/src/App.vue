@@ -302,10 +302,6 @@
                         <span class="latest-meta-label">别名</span>
                         <span>{{ akaPreview(latestDetail.aka) }}</span>
                       </div>
-                      <div v-if="latestPlotPreview" class="latest-meta-row">
-                        <span class="latest-meta-label">简介</span>
-                        <span>{{ latestPlotPreview }}</span>
-                      </div>
                     </div>
                     <p class="latest-detail-plot">{{ latestPlotSummary }}</p>
                     <div class="latest-actions" v-if="latestMagnetLink">
