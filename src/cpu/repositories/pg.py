@@ -355,12 +355,15 @@ class PGClient:
             """
             SELECT content_type,
                    tmdb_id,
+                   imdb_id,
                    aka,
                    keywords,
                    actors,
                    directors,
                    plot,
                    genre,
+                   imdb_rating,
+                   douban_rating,
                    raw,
                    updated_at
             FROM {schema}.tmdb_enrichment
@@ -371,12 +374,15 @@ class PGClient:
             """
             SELECT content_type,
                    tmdb_id,
+                   imdb_id,
                    aka,
                    keywords,
                    actors,
                    directors,
                    plot,
                    genre,
+                   imdb_rating,
+                   douban_rating,
                    raw,
                    updated_at
             FROM {schema}.tmdb_enrichment

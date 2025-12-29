@@ -30,6 +30,15 @@ tmdb:
   enabled: false
   # api_key: "REPLACE_TMDB_KEY"
   api_key_env: "TMDB_API_KEY"
+  # imdb:
+  #   enabled: false
+  #   api_key_env: "OMDB_API_KEY"
+  #   base_url: "https://www.omdbapi.com"
+  # douban:
+  #   enabled: false
+  #   base_url: "https://api.douban.com/v2/movie/imdb"
+  #   api_key_env: ""
+  #   api_key_param: "apikey"
   base_url: "https://api.themoviedb.org/3"
   language: "zh-CN"
   sleep_seconds: 1.0
@@ -109,7 +118,7 @@ sources:
   #     id_field: "content_uid"
   #     text_field: "search_text"
   #     updated_at_field: "updated_at"
-  #     extra_fields: ["title", "original_title", "overview", "type", "source", "id", "adult", "release_year", "tmdb_id", "genre", "aka", "keywords", "actors", "directors", "plot", "poster_path", "backdrop_path"]
+  #     extra_fields: ["title", "original_title", "overview", "type", "source", "id", "adult", "release_year", "tmdb_id", "imdb_id", "imdb_rating", "douban_rating", "genre", "aka", "keywords", "actors", "directors", "plot", "poster_path", "backdrop_path"]
   #     tmdb_enrich: true
   #     keyword_search: true
   #     keyword_fields: ["title", "original_title", "overview"]

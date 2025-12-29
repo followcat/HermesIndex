@@ -96,6 +96,9 @@ def create_content_view(conn: psycopg.Connection, schema: str) -> None:
             te.actors AS actors,
             te.directors AS directors,
             te.plot AS plot,
+            te.imdb_id AS imdb_id,
+            te.imdb_rating AS imdb_rating,
+            te.douban_rating AS douban_rating,
             te.raw->>'poster_path' AS poster_path,
             te.raw->>'backdrop_path' AS backdrop_path
         FROM public.content c
@@ -127,6 +130,9 @@ def create_content_view(conn: psycopg.Connection, schema: str) -> None:
             te.actors,
             te.directors,
             te.plot,
+            te.imdb_id,
+            te.imdb_rating,
+            te.douban_rating,
             te.raw->>'poster_path',
             te.raw->>'backdrop_path'
         """
@@ -141,12 +147,15 @@ def ensure_tmdb_table(conn: psycopg.Connection, schema: str) -> None:
         CREATE TABLE IF NOT EXISTS {schema}.tmdb_enrichment (
             content_type TEXT NOT NULL,
             tmdb_id TEXT NOT NULL,
+            imdb_id TEXT,
             aka TEXT,
             keywords TEXT,
             actors TEXT,
             directors TEXT,
             plot TEXT,
             genre TEXT,
+            imdb_rating DOUBLE PRECISION,
+            douban_rating DOUBLE PRECISION,
             raw JSONB,
             updated_at TIMESTAMPTZ DEFAULT now(),
             PRIMARY KEY (content_type, tmdb_id)
@@ -155,6 +164,19 @@ def ensure_tmdb_table(conn: psycopg.Connection, schema: str) -> None:
     ).format(schema=sql.Identifier(schema))
     with conn.cursor() as cur:
         cur.execute(table_sql)
+
+
+def ensure_tmdb_columns(conn: psycopg.Connection, schema: str) -> None:
+    alter_sql = sql.SQL(
+        """
+        ALTER TABLE {schema}.tmdb_enrichment
+            ADD COLUMN IF NOT EXISTS imdb_id TEXT,
+            ADD COLUMN IF NOT EXISTS imdb_rating DOUBLE PRECISION,
+            ADD COLUMN IF NOT EXISTS douban_rating DOUBLE PRECISION;
+        """
+    ).format(schema=sql.Identifier(schema))
+    with conn.cursor() as cur:
+        cur.execute(alter_sql)
 
 
 def setup_bitmagnet(config_path: str) -> None:
@@ -169,6 +191,7 @@ def setup_bitmagnet(config_path: str) -> None:
     with psycopg.connect(dsn, autocommit=True) as conn:
         ensure_schema(conn, schema, create_schema)
         ensure_tmdb_table(conn, schema)
+        ensure_tmdb_columns(conn, schema)
         create_torrent_files_view(conn, schema)
         create_content_view(conn, schema)
     logger.info("bitmagnet views created in schema=%s", schema)

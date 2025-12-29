@@ -34,6 +34,15 @@ tmdb:
   max_per_batch: 50
   query_expand: true
   query_expand_limit: 20
+  # imdb:
+  #   enabled: false
+  #   api_key_env: "OMDB_API_KEY"
+  #   base_url: "https://www.omdbapi.com"
+  # douban:
+  #   enabled: false
+  #   base_url: "https://api.douban.com/v2/movie/imdb"
+  #   api_key_env: ""
+  #   api_key_param: "apikey"
   # limits:
   #   actors: 10
   #   directors: 5

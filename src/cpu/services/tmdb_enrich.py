@@ -105,6 +105,7 @@ def normalize_tmdb_payload(payload: Dict[str, Any], limits: Dict[str, int]) -> D
         "genre": genres,
         "poster_path": payload.get("poster_path"),
         "backdrop_path": payload.get("backdrop_path"),
+        "imdb_id": (payload.get("external_ids") or {}).get("imdb_id") or payload.get("imdb_id"),
     }
 
 
@@ -119,15 +120,19 @@ def upsert_tmdb(
     statement = sql.SQL(
         """
         INSERT INTO {schema}.tmdb_enrichment
-            (content_type, tmdb_id, aka, keywords, actors, directors, plot, genre, raw, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, now())
+            (content_type, tmdb_id, imdb_id, aka, keywords, actors, directors, plot, genre,
+             imdb_rating, douban_rating, raw, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, now())
         ON CONFLICT (content_type, tmdb_id) DO UPDATE
-        SET aka = EXCLUDED.aka,
+        SET imdb_id = EXCLUDED.imdb_id,
+            aka = EXCLUDED.aka,
             keywords = EXCLUDED.keywords,
             actors = EXCLUDED.actors,
             directors = EXCLUDED.directors,
             plot = EXCLUDED.plot,
             genre = EXCLUDED.genre,
+            imdb_rating = EXCLUDED.imdb_rating,
+            douban_rating = EXCLUDED.douban_rating,
             raw = EXCLUDED.raw,
             updated_at = now()
         """
@@ -138,12 +143,15 @@ def upsert_tmdb(
             (
                 content_type,
                 tmdb_id,
+                values.get("imdb_id"),
                 values.get("aka"),
                 values.get("keywords"),
                 values.get("actors"),
                 values.get("directors"),
                 values.get("plot"),
                 values.get("genre"),
+                values.get("imdb_rating"),
+                values.get("douban_rating"),
                 json.dumps(raw),
             ),
         )
@@ -164,11 +172,64 @@ def fetch_tmdb_payload(
     params = {
         "api_key": api_key,
         "language": language,
-        "append_to_response": "credits,keywords,alternative_titles",
+        "append_to_response": "credits,keywords,alternative_titles,external_ids",
     }
     resp = client.get(url, params=params)
     resp.raise_for_status()
     return resp.json()
+
+
+def fetch_imdb_rating(
+    client: httpx.Client, imdb_cfg: Dict[str, Any], imdb_id: str | None
+) -> float | None:
+    if not imdb_cfg.get("enabled") or not imdb_id:
+        return None
+    api_key = imdb_cfg.get("api_key")
+    if not api_key:
+        env_name = imdb_cfg.get("api_key_env", "OMDB_API_KEY")
+        api_key = os.getenv(env_name)
+    if not api_key:
+        return None
+    base_url = imdb_cfg.get("base_url", "https://www.omdbapi.com")
+    resp = client.get(base_url, params={"i": imdb_id, "apikey": api_key})
+    if resp.status_code != 200:
+        return None
+    data = resp.json()
+    rating = data.get("imdbRating")
+    if not rating or rating == "N/A":
+        return None
+    try:
+        return float(rating)
+    except (TypeError, ValueError):
+        return None
+
+
+def fetch_douban_rating(
+    client: httpx.Client, douban_cfg: Dict[str, Any], imdb_id: str | None
+) -> float | None:
+    if not douban_cfg.get("enabled") or not imdb_id:
+        return None
+    base_url = douban_cfg.get("base_url", "https://api.douban.com/v2/movie/imdb")
+    params = {}
+    api_key = douban_cfg.get("api_key")
+    if not api_key:
+        env_name = douban_cfg.get("api_key_env")
+        if env_name:
+            api_key = os.getenv(env_name)
+    api_key_param = douban_cfg.get("api_key_param")
+    if api_key and api_key_param:
+        params[api_key_param] = api_key
+    resp = client.get(f"{base_url}/{imdb_id}", params=params or None)
+    if resp.status_code != 200:
+        return None
+    data = resp.json()
+    rating = (data.get("rating") or {}).get("average")
+    if rating is None or rating == "":
+        return None
+    try:
+        return float(rating)
+    except (TypeError, ValueError):
+        return None
 
 
 def filter_missing_tmdb_refs(
@@ -231,11 +292,16 @@ def ensure_tmdb_enrichment(
     sleep_seconds = float(tmdb_cfg.get("sleep_seconds", 1.0))
     timeout = float(tmdb_cfg.get("timeout_seconds", 10))
 
+    imdb_cfg = tmdb_cfg.get("imdb") or {}
+    douban_cfg = tmdb_cfg.get("douban") or {}
     with httpx.Client(timeout=timeout) as client:
         for content_type, tmdb_id in missing:
             try:
                 payload = fetch_tmdb_payload(client, base_url, api_key, content_type, tmdb_id, language)
                 values = normalize_tmdb_payload(payload, limits)
+                imdb_id = values.get("imdb_id")
+                values["imdb_rating"] = fetch_imdb_rating(client, imdb_cfg, imdb_id)
+                values["douban_rating"] = fetch_douban_rating(client, douban_cfg, imdb_id)
                 upsert_tmdb(conn, schema, content_type, tmdb_id, values, payload)
                 logger.info("Auto-enriched tmdb %s:%s", content_type, tmdb_id)
             except Exception as exc:
@@ -262,6 +328,8 @@ def run_enrich(config_path: str, limit: int, force: bool, loop: bool) -> None:
     timeout = float(tmdb_cfg.get("timeout_seconds", 10))
     loop_sleep_seconds = float(tmdb_cfg.get("loop_sleep_seconds", 10.0))
     failed_refs: Set[Tuple[str, str]] = set()
+    imdb_cfg = tmdb_cfg.get("imdb") or {}
+    douban_cfg = tmdb_cfg.get("douban") or {}
 
     with connect(dsn) as conn:
         with httpx.Client(timeout=timeout) as client:
@@ -281,6 +349,9 @@ def run_enrich(config_path: str, limit: int, force: bool, loop: bool) -> None:
                     try:
                         payload = fetch_tmdb_payload(client, base_url, api_key, content_type, tmdb_id, language)
                         values = normalize_tmdb_payload(payload, limits)
+                        imdb_id = values.get("imdb_id")
+                        values["imdb_rating"] = fetch_imdb_rating(client, imdb_cfg, imdb_id)
+                        values["douban_rating"] = fetch_douban_rating(client, douban_cfg, imdb_id)
                         upsert_tmdb(conn, schema, content_type, tmdb_id, values, payload)
                         logger.info("Enriched tmdb %s:%s", content_type, tmdb_id)
                     except Exception as exc:

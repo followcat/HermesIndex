@@ -125,6 +125,12 @@
                   <span v-if="item.metadata.type">{{ item.metadata.type }}</span>
                   <span v-if="item.metadata.genre">{{ item.metadata.genre }}</span>
                   <span v-if="item.metadata.updated_at">更新 {{ formatDate(item.metadata.updated_at) }}</span>
+                  <span v-if="imdbRating(item.metadata)">
+                    IMDB {{ imdbRating(item.metadata) }}
+                  </span>
+                  <span v-if="doubanRating(item.metadata)">
+                    豆瓣 {{ doubanRating(item.metadata) }}
+                  </span>
                 </div>
                 <div v-if="itemMagnetLink(item)" class="result-actions">
                   <a class="action-btn" :href="itemMagnetLink(item)" @click.stop>直接下载</a>
@@ -143,6 +149,12 @@
               <span v-if="item.metadata.release_year">{{ item.metadata.release_year }}</span>
               <span v-if="item.metadata.video_resolution">{{ item.metadata.video_resolution }}</span>
               <span v-if="item.metadata.collection_names">{{ formatList(item.metadata.collection_names) }}</span>
+              <span v-if="imdbRating(item.metadata)">
+                IMDB {{ imdbRating(item.metadata) }}
+              </span>
+              <span v-if="doubanRating(item.metadata)">
+                豆瓣 {{ doubanRating(item.metadata) }}
+              </span>
             </div>
             <div class="meta">
               <span v-if="item.metadata.tags">标签: {{ formatList(item.metadata.tags) }}</span>
@@ -190,6 +202,14 @@
               <div v-if="selected.metadata.video_codec">{{ selected.metadata.video_codec }}</div>
               <span v-if="selected.metadata.tags">标签</span>
               <div v-if="selected.metadata.tags">{{ formatList(selected.metadata.tags) }}</div>
+              <span v-if="imdbRating(selected.metadata)">IMDB</span>
+              <div v-if="imdbRating(selected.metadata)">
+                {{ imdbRating(selected.metadata) }}
+              </div>
+              <span v-if="doubanRating(selected.metadata)">豆瓣</span>
+              <div v-if="doubanRating(selected.metadata)">
+                {{ doubanRating(selected.metadata) }}
+              </div>
               <span v-if="selected.metadata.directors">导演</span>
               <div v-if="selected.metadata.directors">{{ selected.metadata.directors }}</div>
             </div>
@@ -301,6 +321,14 @@
                       <div v-if="latestDetail.aka" class="latest-meta-row">
                         <span class="latest-meta-label">别名</span>
                         <span>{{ akaPreview(latestDetail.aka) }}</span>
+                      </div>
+                      <div v-if="imdbRating(latestDetail)" class="latest-meta-row">
+                        <span class="latest-meta-label">IMDB</span>
+                        <span>{{ imdbRating(latestDetail) }}</span>
+                      </div>
+                      <div v-if="doubanRating(latestDetail)" class="latest-meta-row">
+                        <span class="latest-meta-label">豆瓣</span>
+                        <span>{{ doubanRating(latestDetail) }}</span>
                       </div>
                     </div>
                     <p class="latest-detail-plot">{{ latestPlotSummary }}</p>
@@ -504,6 +532,8 @@ const newUser = ref({ username: "", password: "", role: "user" });
 const pwdForm = ref({ old_password: "", new_password: "" });
 const pwdLoading = ref(false);
 const pwdMessage = ref("");
+const imdbRatingKeys = ["imdb_rating", "imdb_score", "imdb", "rating_imdb"];
+const doubanRatingKeys = ["douban_rating", "douban_score", "douban", "rating_douban"];
 const SEARCH_STATE_KEY = "hermes_search_state";
 let saveSearchTimer = null;
 
@@ -717,6 +747,39 @@ function normalizeInfoHash(raw) {
 function formatList(value) {
   if (Array.isArray(value)) return value.filter(Boolean).join(" · ");
   return value || "";
+}
+
+function ratingValue(meta, keys) {
+  if (!meta || typeof meta !== "object") return "";
+  for (const key of keys) {
+    const parsed = parseRating(meta[key]);
+    if (parsed !== null) return formatRating(parsed);
+  }
+  return "";
+}
+
+function imdbRating(meta) {
+  return ratingValue(meta, imdbRatingKeys);
+}
+
+function doubanRating(meta) {
+  return ratingValue(meta, doubanRatingKeys);
+}
+
+function parseRating(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  const text = String(value).trim();
+  if (!text) return null;
+  const match = text.match(/(\d+(\.\d+)?)/);
+  if (!match) return null;
+  const num = Number(match[1]);
+  return Number.isFinite(num) ? num : null;
+}
+
+function formatRating(value) {
+  if (!Number.isFinite(value)) return "";
+  return value >= 10 ? String(Math.round(value)) : value.toFixed(1);
 }
 
 function prettySize(size) {

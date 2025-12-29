@@ -85,12 +85,15 @@ class LatestTmdbItem(BaseModel):
 class TmdbDetail(BaseModel):
     content_type: str
     tmdb_id: str
+    imdb_id: str | None = None
     aka: str | None = None
     keywords: str | None = None
     actors: str | None = None
     directors: str | None = None
     plot: str | None = None
     genre: str | None = None
+    imdb_rating: float | None = None
+    douban_rating: float | None = None
     poster_url: str | None = None
     backdrop_url: str | None = None
     updated_at: datetime | None = None
@@ -661,6 +664,11 @@ def tmdb_detail(
                         language,
                     )
                     values = tmdb_enrich.normalize_tmdb_payload(payload, limits)
+                    imdb_cfg = tmdb_cfg.get("imdb") or {}
+                    douban_cfg = tmdb_cfg.get("douban") or {}
+                    imdb_id = values.get("imdb_id")
+                    values["imdb_rating"] = tmdb_enrich.fetch_imdb_rating(client, imdb_cfg, imdb_id)
+                    values["douban_rating"] = tmdb_enrich.fetch_douban_rating(client, douban_cfg, imdb_id)
                 with tmdb_enrich.connect(cfg.postgres["dsn"]) as conn:
                     tmdb_enrich.upsert_tmdb(conn, schema, content_type, tmdb_id, values, payload)
                 row = pg_client.fetch_tmdb_detail(schema, content_type, tmdb_id)
