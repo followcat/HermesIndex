@@ -132,6 +132,9 @@
                     豆瓣 {{ doubanRating(item.metadata) }}
                   </span>
                 </div>
+                <p v-if="itemPlotPreview(item)" class="result-plot-preview">
+                  {{ itemPlotPreview(item) }}
+                </p>
                 <div v-if="itemMagnetLink(item)" class="result-actions">
                   <a class="action-btn" :href="itemMagnetLink(item)" @click.stop>直接下载</a>
                 </div>
@@ -156,6 +159,9 @@
                 豆瓣 {{ doubanRating(item.metadata) }}
               </span>
             </div>
+            <p v-if="itemPlotPreview(item)" class="result-plot-preview">
+              {{ itemPlotPreview(item) }}
+            </p>
             <div class="meta">
               <span v-if="item.metadata.tags">标签: {{ formatList(item.metadata.tags) }}</span>
               <span v-if="item.metadata.video_codec">编码: {{ item.metadata.video_codec }}</span>
@@ -269,6 +275,9 @@
                   <span v-if="item.genre">{{ item.genre }}</span>
                   <span v-if="item.updated_at">更新 {{ formatDate(item.updated_at) }}</span>
                 </div>
+                <p v-if="latestPlotPreviewFor(item)" class="latest-plot-preview">
+                  {{ latestPlotPreviewFor(item) }}
+                </p>
               </div>
             </div>
             <div
@@ -514,6 +523,7 @@ const latestTmdb = ref([]);
 const latestLoading = ref(false);
 const selectedLatest = ref(null);
 const latestDetail = ref(null);
+const latestDetailCache = ref({});
 const latestDetailLoading = ref(false);
 const latestMagnetLink = ref("");
 const latestMagnetLoading = ref(false);
@@ -747,6 +757,29 @@ function normalizeInfoHash(raw) {
 function formatList(value) {
   if (Array.isArray(value)) return value.filter(Boolean).join(" · ");
   return value || "";
+}
+
+function summarizeText(text, maxLength = 90) {
+  const trimmed = String(text || "").trim();
+  if (!trimmed) return "";
+  if (trimmed.length <= maxLength) return trimmed;
+  return `${trimmed.slice(0, maxLength)}...`;
+}
+
+function itemPlotPreview(item) {
+  const meta = item?.metadata || {};
+  const text = meta.plot || meta.overview || meta.hint_title || meta.title || item?.title || "";
+  return summarizeText(text, 90);
+}
+
+function latestPlotPreviewFor(item) {
+  if (!item) return "";
+  const cached = latestDetailCache.value?.[item.content_uid] || {};
+  const detail = selectedLatest.value?.content_uid === item.content_uid && latestDetail.value
+    ? latestDetail.value
+    : cached;
+  const text = detail.plot || detail.overview || detail.title || item.title || "";
+  return summarizeText(text, 100);
 }
 
 function ratingValue(meta, keys) {
@@ -1168,6 +1201,12 @@ async function fetchLatestDetail(item) {
       type: item?.type,
       genre: item?.genre,
     };
+    if (item?.content_uid) {
+      latestDetailCache.value = {
+        ...latestDetailCache.value,
+        [item.content_uid]: latestDetail.value,
+      };
+    }
     return;
   }
   latestDetailLoading.value = true;
@@ -1189,6 +1228,12 @@ async function fetchLatestDetail(item) {
           genre: data.detail?.genre || latestDetail.value?.genre,
         }
       : latestDetail.value;
+    if (item?.content_uid && latestDetail.value) {
+      latestDetailCache.value = {
+        ...latestDetailCache.value,
+        [item.content_uid]: latestDetail.value,
+      };
+    }
   } catch (err) {
     console.error(err);
     latestDetail.value = latestDetail.value || {
@@ -1197,6 +1242,12 @@ async function fetchLatestDetail(item) {
       type: item?.type,
       genre: item?.genre,
     };
+    if (item?.content_uid && latestDetail.value) {
+      latestDetailCache.value = {
+        ...latestDetailCache.value,
+        [item.content_uid]: latestDetail.value,
+      };
+    }
   } finally {
     latestDetailLoading.value = false;
   }
