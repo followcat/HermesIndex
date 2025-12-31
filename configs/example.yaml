@@ -48,6 +48,68 @@ tmdb:
   #   directors: 5
   #   aka: 10
 
+# TPDB/Stash-Box enrichment (optional, requires GraphQL query/response path)
+tpdb:
+  enabled: false
+  # api_token: "REPLACE_TPDB_TOKEN"
+  api_token_env: "TPDB_API_TOKEN"
+  endpoints:
+    jav: "https://theporndb.net/graphql?type=JAV"
+    movie: "https://theporndb.net/graphql?type=Movie"
+  auth_header: "ApiKey"
+  # auth_prefix: "Bearer"
+  timeout_seconds: 15
+  sleep_seconds: 1.0
+  auto_enrich: false
+  max_per_batch: 50
+  default_type: "jav"
+  search_limit: 10
+  require_code: true
+  cache_ttl_hours: 168
+  not_found_ttl_hours: 720
+  queries:
+    jav: |
+      query SearchScene($term: String!, $limit: Int) {
+        searchScene(term: $term, limit: $limit) {
+          id
+          title
+          details
+          date
+          release_date
+          production_date
+          duration
+          director
+          code
+          urls { url site { name } }
+          studio { id name }
+          tags { name }
+          images { url width height }
+          performers { performer { name } }
+        }
+      }
+    movie: |
+      query SearchScene($term: String!, $limit: Int) {
+        searchScene(term: $term, limit: $limit) {
+          id
+          title
+          details
+          date
+          release_date
+          production_date
+          duration
+          director
+          code
+          urls { url site { name } }
+          studio { id name }
+          tags { name }
+          images { url width height }
+          performers { performer { name } }
+        }
+      }
+  result_paths:
+    jav: "data.searchScene"
+    movie: "data.searchScene"
+
 # 简易认证（可选）
 auth:
   enabled: false
@@ -124,3 +186,111 @@ sources:
       metric: "cosine"
     tagging:
       nsfw: false
+
+  - name: "content_tpdb_jav"
+    pg:
+      table: "hermes.content_view"
+      id_field: "content_uid"
+      text_field: "search_text"
+      updated_at_field: "updated_at"
+      extra_fields:
+        [
+          "title",
+          "original_title",
+          "overview",
+          "type",
+          "source",
+          "id",
+          "adult",
+          "release_year",
+          "tmdb_id",
+          "genre",
+          "aka",
+          "keywords",
+          "actors",
+          "directors",
+          "plot",
+          "poster_path",
+          "backdrop_path",
+          "tpdb_id",
+          "tpdb_title",
+          "tpdb_original_title",
+          "tpdb_aka",
+          "tpdb_actors",
+          "tpdb_tags",
+          "tpdb_studio",
+          "tpdb_series",
+          "tpdb_site",
+          "tpdb_release_date",
+          "tpdb_plot",
+          "tpdb_poster_url",
+        ]
+      tmdb_enrich: true
+      tpdb_enrich: true
+      tpdb_type: "jav"
+      keyword_search: true
+      keyword_fields: ["title", "original_title", "overview"]
+    vector_index:
+      index_name: "content_jav_title_v1"
+      dim: 768
+      metric: "cosine"
+    tagging:
+      nsfw: true
+    sync:
+      mode: "incremental"
+      batch_size: 256
+      concurrency: 2
+
+  - name: "content_tpdb_movie"
+    pg:
+      table: "hermes.content_view"
+      id_field: "content_uid"
+      text_field: "search_text"
+      updated_at_field: "updated_at"
+      extra_fields:
+        [
+          "title",
+          "original_title",
+          "overview",
+          "type",
+          "source",
+          "id",
+          "adult",
+          "release_year",
+          "tmdb_id",
+          "genre",
+          "aka",
+          "keywords",
+          "actors",
+          "directors",
+          "plot",
+          "poster_path",
+          "backdrop_path",
+          "tpdb_id",
+          "tpdb_title",
+          "tpdb_original_title",
+          "tpdb_aka",
+          "tpdb_actors",
+          "tpdb_tags",
+          "tpdb_studio",
+          "tpdb_series",
+          "tpdb_site",
+          "tpdb_release_date",
+          "tpdb_plot",
+          "tpdb_poster_url",
+        ]
+      tmdb_enrich: true
+      tpdb_enrich: true
+      tpdb_type: "movie"
+      keyword_search: true
+      keyword_fields: ["title", "original_title", "overview"]
+    vector_index:
+      index_name: "content_movie_title_v1"
+      dim: 768
+      metric: "cosine"
+    tagging:
+      nsfw: true
+    sync:
+      mode: "incremental"
+      batch_size: 256
+      concurrency: 2

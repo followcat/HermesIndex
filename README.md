@@ -75,6 +75,12 @@ TMDB 自动扩展（可选）
 --------------------
 `tmdb.auto_enrich=true` 时，同步 `bitmagnet_content` 会自动拉取 TMDB 信息（演员/导演/别名/关键词/剧情/类型）并写入 `hermes.tmdb_enrichment`。
 
+TPDB/Stash-Box 自动扩展（可选）
+------------------------------
+`tpdb.auto_enrich=true` 时，同步 content 视图会自动拉取 TPDB 信息（JAV/Scene/Movie），写入 `hermes.tpdb_enrichment`。
+需要配置 `tpdb.query` 或 `tpdb.queries` 和对应的 `result_path(s)`（GraphQL 查询与结果路径），以及 `TPDB_API_TOKEN` 环境变量。
+若需要同时对 JAV 和 Movie 生效，可在 source 的 `pg.tpdb_type` 指定 `jav` 或 `movie`，并配置 `tpdb.endpoints/queries/result_paths`。
+
 bitmagnet 索引建议
 -----------------
 同步性能优先依赖 `updated_at` 索引，建议执行：
@@ -93,7 +99,7 @@ psql "$BITMAGNET_DSN" -f sql/bitmagnet_indexes.sql
 - `scripts/run_gpu_multi.sh`：单进程多卡 GPU 服务（默认 `GPU_DEVICES=0,1,2,3`）
 - `scripts/run_gpu_single.sh`：单进程单卡 GPU 服务
 - `scripts/run_cpu_service.sh`：CPU 搜索服务
-- `scripts/run_sync_all.sh`：同步任务 + TMDB enrich 并行（loop）
+- `scripts/run_sync_all.sh`：同步任务 + TMDB enrich 并行（loop），可选开启 TPDB（`TPDB_ENABLE=true`）
 - `scripts/purge_hermes_data.sh`：清空 hermes schema 与向量库（需要二次确认）
 - `scripts/entry.sh`：统一入口（`gpu-multi|gpu-single|cpu|sync-all|purge`）
 

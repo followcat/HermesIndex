@@ -40,6 +40,7 @@ Bitmagnet 数据库可用数据总结
 - 增量字段：`updated_at`
 - 推荐 extra_fields：`type`, `source`, `id`, `original_title`, `overview`, `adult`, `release_year`, `tmdb_id`, `genre`, `aka`, `keywords`, `actors`, `directors`, `plot`, `poster_path`, `backdrop_path`
 - 适用：内容级语义检索（电影/剧集等）
+  - 若启用 TPDB enrich，可追加：`tpdb_id`, `tpdb_title`, `tpdb_aka`, `tpdb_actors`, `tpdb_tags`, `tpdb_studio`, `tpdb_series`, `tpdb_site`, `tpdb_release_date`, `tpdb_plot`, `tpdb_poster_url`
 
 标签/属性补充（推荐 join）
 ---------------------------
