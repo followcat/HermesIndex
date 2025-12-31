@@ -26,6 +26,10 @@ done < <(find_pids "cpu.services.tmdb_enrich")
 
 while read -r pid; do
   [[ -n "$pid" ]] && pids+=("$pid")
+done < <(find_pids "cpu.services.tpdb_enrich")
+
+while read -r pid; do
+  [[ -n "$pid" ]] && pids+=("$pid")
 done < <(find_pids "cpu.services.sync_runner")
 
 if [[ ${#pids[@]} -eq 0 ]]; then

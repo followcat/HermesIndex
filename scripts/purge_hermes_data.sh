@@ -66,7 +66,7 @@ fi
 if [[ "$PURGE_MODE" == "drop" ]]; then
   warning_action="DROP schema '$HERMES_SCHEMA'"
 else
-  warning_action="TRUNCATE tables and DROP views in schema '$HERMES_SCHEMA'"
+  warning_action="TRUNCATE tables (including tmdb_enrichment/tpdb_enrichment) and DROP views in schema '$HERMES_SCHEMA'"
 fi
 
 echo "WARNING: This will $warning_action and delete vector data."

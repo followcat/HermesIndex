@@ -69,6 +69,32 @@ with psycopg.connect(dsn, autocommit=True) as conn:
             print(f"  Missing aka/keywords: {tmdb_missing}")
         else:
             print("TMDB enrichment: not found")
+        cur.execute(
+            "SELECT to_regclass(%s)",
+            (f"{schema}.tpdb_enrichment",),
+        )
+        tpdb_table = cur.fetchone()[0]
+        if tpdb_table:
+            cur.execute(f"SELECT count(*) FROM {schema}.tpdb_enrichment")
+            tpdb_total = cur.fetchone()[0]
+            cur.execute(f"SELECT max(updated_at) FROM {schema}.tpdb_enrichment")
+            tpdb_max_updated = cur.fetchone()[0]
+            cur.execute(
+                f"""
+                SELECT status, count(*)
+                FROM {schema}.tpdb_enrichment
+                GROUP BY status
+                """
+            )
+            status_rows = cur.fetchall()
+            status_map = {row[0]: row[1] for row in status_rows}
+            print("TPDB enrichment:")
+            print(f"  Table: {schema}.tpdb_enrichment")
+            print(f"  Total rows: {tpdb_total}")
+            print(f"  Max updated_at: {tpdb_max_updated}")
+            print(f"  Status counts: {status_map}")
+        else:
+            print("TPDB enrichment: not found")
         for source in sources:
             name = source.get("name")
             pg_cfg = source.get("pg", {})
