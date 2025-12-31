@@ -90,7 +90,17 @@ def create_content_view(conn: psycopg.Connection, schema: str) -> None:
                 te.actors,
                 te.directors,
                 te.plot,
-                te.genre
+                te.genre,
+                je.title,
+                je.original_title,
+                je.aka,
+                je.actors,
+                je.tags,
+                je.studio,
+                je.series,
+                je.site,
+                je.release_date,
+                je.plot
             )) AS search_text,
             te.aka AS aka,
             te.actors AS actors,
@@ -100,7 +110,19 @@ def create_content_view(conn: psycopg.Connection, schema: str) -> None:
             te.imdb_rating AS imdb_rating,
             te.douban_rating AS douban_rating,
             te.raw->>'poster_path' AS poster_path,
-            te.raw->>'backdrop_path' AS backdrop_path
+            te.raw->>'backdrop_path' AS backdrop_path,
+            je.tpdb_id AS tpdb_id,
+            je.title AS tpdb_title,
+            je.original_title AS tpdb_original_title,
+            je.aka AS tpdb_aka,
+            je.actors AS tpdb_actors,
+            je.tags AS tpdb_tags,
+            je.studio AS tpdb_studio,
+            je.series AS tpdb_series,
+            je.site AS tpdb_site,
+            je.release_date AS tpdb_release_date,
+            je.plot AS tpdb_plot,
+            je.poster_url AS tpdb_poster_url
         FROM public.content c
         LEFT JOIN public.content_collections_content ccc
             ON ccc.content_type = c.type
@@ -114,6 +136,10 @@ def create_content_view(conn: psycopg.Connection, schema: str) -> None:
             ON te.content_type = c.type
             AND te.tmdb_id = c.id
             AND c.source = 'tmdb'
+        LEFT JOIN {schema}.tpdb_enrichment je
+            ON je.content_type = c.type
+            AND je.content_source = c.source
+            AND je.content_id = c.id
         GROUP BY
             c.type,
             c.source,
@@ -134,10 +160,23 @@ def create_content_view(conn: psycopg.Connection, schema: str) -> None:
             te.imdb_rating,
             te.douban_rating,
             te.raw->>'poster_path',
-            te.raw->>'backdrop_path'
+            te.raw->>'backdrop_path',
+            je.tpdb_id,
+            je.title,
+            je.original_title,
+            je.aka,
+            je.actors,
+            je.tags,
+            je.studio,
+            je.series,
+            je.site,
+            je.release_date,
+            je.plot,
+            je.poster_url
         """
     ).format(schema=sql.Identifier(schema))
     with conn.cursor() as cur:
+        cur.execute(sql.SQL("DROP VIEW IF EXISTS {schema}.content_view").format(schema=sql.Identifier(schema)))
         cur.execute(view_sql)
 
 
@@ -179,6 +218,42 @@ def ensure_tmdb_columns(conn: psycopg.Connection, schema: str) -> None:
         cur.execute(alter_sql)
 
 
+def ensure_tpdb_table(conn: psycopg.Connection, schema: str) -> None:
+    table_sql = sql.SQL(
+        """
+        CREATE TABLE IF NOT EXISTS {schema}.tpdb_enrichment (
+            content_type TEXT NOT NULL,
+            content_source TEXT NOT NULL,
+            content_id TEXT NOT NULL,
+            tpdb_id TEXT,
+            external_type TEXT,
+            title TEXT,
+            original_title TEXT,
+            aka TEXT,
+            actors TEXT,
+            tags TEXT,
+            studio TEXT,
+            series TEXT,
+            site TEXT,
+            release_date TEXT,
+            plot TEXT,
+            poster_url TEXT,
+            match_method TEXT,
+            match_score DOUBLE PRECISION,
+            status TEXT,
+            error_message TEXT,
+            raw JSONB,
+            updated_at TIMESTAMPTZ DEFAULT now(),
+            PRIMARY KEY (content_type, content_source, content_id)
+        );
+        CREATE INDEX IF NOT EXISTS tpdb_enrichment_tpdb_id_idx
+            ON {schema}.tpdb_enrichment (tpdb_id);
+        """
+    ).format(schema=sql.Identifier(schema))
+    with conn.cursor() as cur:
+        cur.execute(table_sql)
+
+
 def setup_bitmagnet(config_path: str) -> None:
     cfg = load_config(config_path)
     bm_cfg = cfg.bitmagnet or {}
@@ -192,6 +267,7 @@ def setup_bitmagnet(config_path: str) -> None:
         ensure_schema(conn, schema, create_schema)
         ensure_tmdb_table(conn, schema)
         ensure_tmdb_columns(conn, schema)
+        ensure_tpdb_table(conn, schema)
         create_torrent_files_view(conn, schema)
         create_content_view(conn, schema)
     logger.info("bitmagnet views created in schema=%s", schema)

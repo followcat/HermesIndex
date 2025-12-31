@@ -12,6 +12,7 @@ from cpu.core.utils import normalize_title_text, text_hash
 from cpu.repositories.pg import PGClient
 from cpu.repositories.vector_store import BaseVectorStore, create_vector_store
 from cpu.services.tmdb_enrich import ensure_tmdb_enrichment
+from cpu.services.tpdb_enrich import ensure_tpdb_enrichment
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -100,6 +101,8 @@ def sync_source(
     concurrency: int,
     tmdb_cfg: Dict[str, Any],
     tmdb_schema: str,
+    tpdb_cfg: Dict[str, Any],
+    tpdb_schema: str,
 ) -> None:
     logger.info("Sync start for source=%s", source["name"])
     total_rows = 0
@@ -166,6 +169,90 @@ def sync_source(
                     enrich_cost,
                     refresh_cost,
                 )
+        if source.get("pg", {}).get("tpdb_enrich"):
+            tpdb_refs = []
+            for r in rows:
+                content_type = r.get("type")
+                content_source = r.get("source")
+                content_id = r.get("id")
+                if content_type and content_source and content_id:
+                    tpdb_refs.append(
+                        {
+                            "content_type": content_type,
+                            "content_source": content_source,
+                            "content_id": str(content_id),
+                            "title": r.get("title"),
+                            "original_title": r.get("original_title"),
+                            "release_year": r.get("release_year"),
+                            "site": r.get("site"),
+                            "tpdb_type": source.get("pg", {}).get("tpdb_type"),
+                        }
+                    )
+            if tpdb_refs and tpdb_cfg.get("enabled") and tpdb_cfg.get("auto_enrich"):
+                logger.info(
+                    "Auto-enrich TPDB refs=%d for source=%s",
+                    len(tpdb_refs),
+                    source["name"],
+                )
+                enrich_start = time.perf_counter()
+                with pg_client.connect() as conn:
+                    ensure_tpdb_enrichment(conn, tpdb_schema, tpdb_refs, tpdb_cfg)
+                enrich_cost = time.perf_counter() - enrich_start
+                ids = [str(r["pg_id"]) for r in rows]
+                refresh_start = time.perf_counter()
+                extra_fields = list(source.get("pg", {}).get("extra_fields", []))
+                tpdb_fields = [
+                    "tpdb_id",
+                    "tpdb_title",
+                    "tpdb_original_title",
+                    "tpdb_aka",
+                    "tpdb_actors",
+                    "tpdb_tags",
+                    "tpdb_studio",
+                    "tpdb_series",
+                    "tpdb_site",
+                    "tpdb_release_date",
+                    "tpdb_plot",
+                    "tpdb_poster_url",
+                ]
+                for field in tpdb_fields:
+                    if field not in extra_fields:
+                        extra_fields.append(field)
+                source_cfg = {
+                    **source,
+                    "pg": {
+                        **source.get("pg", {}),
+                        "extra_fields": extra_fields,
+                    },
+                }
+                refreshed = pg_client.fetch_by_ids(source_cfg, ids)
+                refresh_cost = time.perf_counter() - refresh_start
+                updated_rows: List[Dict[str, Any]] = []
+                updated_at_field = source.get("pg", {}).get("updated_at_field")
+                for pg_id in ids:
+                    pg_row = refreshed.get(pg_id)
+                    if not pg_row:
+                        continue
+                    text = pg_row.get(source["pg"]["text_field"], "")
+                    new_row = {
+                        "pg_id": pg_id,
+                        "text": text,
+                        "text_hash": text_hash(text),
+                    }
+                    if updated_at_field and updated_at_field in pg_row:
+                        new_row["updated_at"] = pg_row.get(updated_at_field)
+                    for field in extra_fields:
+                        if field in pg_row:
+                            new_row[field] = pg_row.get(field)
+                    updated_rows.append(new_row)
+                rows = updated_rows
+                logger.info(
+                    "Refreshed rows after TPDB enrich=%d for source=%s enrich_cost=%.3fs refresh_cost=%.3fs",
+                    len(rows),
+                    source["name"],
+                    enrich_cost,
+                    refresh_cost,
+                )
         texts = []
         for r in rows:
             original = str(r.get("text", ""))
@@ -191,6 +278,8 @@ def sync_source(
             nsfw_flag = score >= nsfw_threshold if source.get("tagging", {}).get("nsfw", True) else False
             tmdb_id = row.get("tmdb_id")
             has_tmdb = bool(tmdb_id)
+            tpdb_id = row.get("tpdb_id")
+            has_tpdb = bool(tpdb_id)
             genre_tags = _parse_genre_tags(row.get("genre"))
             extension = row.get("extension") or _extract_extension(str(row.get("text", "")))
             file_type = _detect_file_type(str(extension))
@@ -215,6 +304,8 @@ def sync_source(
                     "embedding_version": embedding_version,
                     "has_tmdb": has_tmdb,
                     "tmdb_id": str(tmdb_id) if tmdb_id is not None else None,
+                    "has_tpdb": has_tpdb,
+                    "tpdb_id": str(tpdb_id) if tpdb_id is not None else None,
                     "genre_tags": genre_tags,
                     "file_type": file_type,
                     "audio_langs": audio_langs,
@@ -337,6 +428,7 @@ def run_sync(config_path: str, target_source: str | None = None) -> None:
     vector_store = create_vector_store(cfg.vector_store)
     gpu_client = GPUClient(cfg.gpu_endpoint)
     tmdb_schema = (cfg.bitmagnet or {}).get("schema", "hermes")
+    tpdb_schema = (cfg.bitmagnet or {}).get("schema", "hermes")
     sources = [s for s in cfg.sources if (not target_source or s["name"] == target_source)]
     if not sources:
         logger.warning("No sources matched for sync (target=%s)", target_source)
@@ -355,6 +447,8 @@ def run_sync(config_path: str, target_source: str | None = None) -> None:
             concurrency,
             cfg.tmdb,
             tmdb_schema,
+            cfg.tpdb,
+            tpdb_schema,
         )
 
 
