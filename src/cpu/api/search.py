@@ -210,6 +210,36 @@ def require_admin(user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any
     return user
 
 
+def _sanitize_config(obj: Any) -> Any:
+    if isinstance(obj, dict):
+        out: Dict[str, Any] = {}
+        for k, v in obj.items():
+            key = str(k).lower()
+            if any(s in key for s in ("password", "token", "api_key", "apikey", "dsn", "secret")):
+                continue
+            out[k] = _sanitize_config(v)
+        return out
+    if isinstance(obj, list):
+        return [_sanitize_config(v) for v in obj]
+    return obj
+
+
+@app.get("/debug/config")
+def debug_config(_: Dict[str, Any] | None = Depends(require_admin)) -> Dict[str, Any]:
+    vector_cfg = _sanitize_config(cfg.vector_store or {})
+    sources = [s.get("name") for s in (cfg.sources or []) if s.get("name")]
+    try:
+        vs_size = vector_store.size()
+    except Exception as exc:
+        vs_size = f"error: {exc}"
+    return {
+        "config_path": CONFIG_PATH,
+        "vector_store": vector_cfg,
+        "vector_store_size": vs_size,
+        "sources": sources,
+    }
+
+
 def embed_query(text: str) -> np.ndarray:
     if not text:
         raise HTTPException(status_code=400, detail="Empty query")
