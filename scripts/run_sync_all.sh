@@ -6,7 +6,7 @@ TMDB_LIMIT=${TMDB_LIMIT:-500}
 TPDB_LIMIT=${TPDB_LIMIT:-200}
 TPDB_ENABLE=${TPDB_ENABLE:-false}
 SYNC_TARGET=${SYNC_TARGET:-}
-SYNC_SOURCES=${SYNC_SOURCES:-bitmagnet_torrents,bitmagnet_torrent_files}
+SYNC_SOURCES=${SYNC_SOURCES:-bitmagnet_torrents,bitmagnet_torrent_files,bitmagnet_content_tpdb_jav,bitmagnet_content_tpdb_movie}
 SYNC_LOOP=${SYNC_LOOP:-true}
 SYNC_LOOP_SLEEP=${SYNC_LOOP_SLEEP:-300}
 
