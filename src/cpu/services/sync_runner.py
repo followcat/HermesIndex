@@ -5,6 +5,7 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from typing import Any, Dict, List
 
 import numpy as np
+from psycopg import sql
 
 from cpu.clients.gpu_client import GPUClient
 from cpu.config import load_config, source_batch_size, source_concurrency
@@ -174,11 +175,14 @@ def sync_source(
             tpdb_pg_cfg = source.get("pg", {})
             default_content_type = tpdb_pg_cfg.get("tpdb_content_type") or source.get("name")
             default_content_source = tpdb_pg_cfg.get("tpdb_content_source") or source.get("name")
+            tpdb_content_id_by_pg_id: Dict[str, str] = {}
             for r in rows:
                 content_type = r.get("type") or default_content_type
                 content_source = r.get("source") or default_content_source
                 content_id = r.get("id") or r.get("pg_id")
                 if content_type and content_source and content_id:
+                    pg_id = str(r.get("pg_id"))
+                    tpdb_content_id_by_pg_id[pg_id] = str(content_id)
                     tpdb_refs.append(
                         {
                             "content_type": content_type,
@@ -202,9 +206,6 @@ def sync_source(
                 with pg_client.connect() as conn:
                     ensure_tpdb_enrichment(conn, tpdb_schema, tpdb_refs, tpdb_cfg)
                 enrich_cost = time.perf_counter() - enrich_start
-                ids = [str(r["pg_id"]) for r in rows]
-                refresh_start = time.perf_counter()
-                extra_fields = list(source.get("pg", {}).get("extra_fields", []))
                 tpdb_fields = [
                     "tpdb_id",
                     "tpdb_title",
@@ -219,25 +220,77 @@ def sync_source(
                     "tpdb_plot",
                     "tpdb_poster_url",
                 ]
-                for field in tpdb_fields:
-                    if field not in extra_fields:
-                        extra_fields.append(field)
-                source_cfg = {
-                    **source,
-                    "pg": {
-                        **source.get("pg", {}),
-                        "extra_fields": extra_fields,
-                    },
-                }
-                refreshed = pg_client.fetch_by_ids(source_cfg, ids)
-                refresh_cost = time.perf_counter() - refresh_start
+
+                base_extra_fields = list(source.get("pg", {}).get("extra_fields", []))
+                supports_tpdb_fields = any(field in base_extra_fields for field in tpdb_fields)
+
+                ids = [str(r["pg_id"]) for r in rows]
+                refreshed = None
+                refresh_cost = 0.0
+                if supports_tpdb_fields:
+                    refresh_start = time.perf_counter()
+                    extra_fields = list(base_extra_fields)
+                    for field in tpdb_fields:
+                        if field not in extra_fields:
+                            extra_fields.append(field)
+                    source_cfg = {
+                        **source,
+                        "pg": {
+                            **source.get("pg", {}),
+                            "extra_fields": extra_fields,
+                        },
+                    }
+                    refreshed = pg_client.fetch_by_ids(source_cfg, ids)
+                    refresh_cost = time.perf_counter() - refresh_start
+
+                tpdb_rows_by_key: Dict[str, Dict[str, Any]] = {}
+                try:
+                    groups: Dict[tuple[str, str], List[str]] = {}
+                    for ref in tpdb_refs:
+                        key = (str(ref["content_type"]), str(ref["content_source"]))
+                        groups.setdefault(key, []).append(str(ref["content_id"]))
+                    with pg_client.connect() as conn:
+                        with conn.cursor() as cur:
+                            for (content_type, content_source), content_ids in groups.items():
+                                cur.execute(
+                                    sql.SQL(
+                                        """
+                                        SELECT content_id::text AS content_id,
+                                               tpdb_id,
+                                               title AS tpdb_title,
+                                               original_title AS tpdb_original_title,
+                                               aka AS tpdb_aka,
+                                               actors AS tpdb_actors,
+                                               tags AS tpdb_tags,
+                                               studio AS tpdb_studio,
+                                               series AS tpdb_series,
+                                               site AS tpdb_site,
+                                               release_date AS tpdb_release_date,
+                                               plot AS tpdb_plot,
+                                               poster_url AS tpdb_poster_url,
+                                               status AS tpdb_status,
+                                               updated_at AS tpdb_updated_at
+                                        FROM {schema}.tpdb_enrichment
+                                        WHERE content_type = %s
+                                          AND content_source = %s
+                                          AND content_id = ANY(%s)
+                                        """
+                                    ).format(schema=sql.Identifier(tpdb_schema)),
+                                    (content_type, content_source, content_ids),
+                                )
+                                for row in cur.fetchall():
+                                    tpdb_rows_by_key[str(row["content_id"])] = dict(row)
+                except Exception as exc:
+                    logger.warning("Failed to load TPDB fields for source=%s error=%s", source["name"], exc)
+
                 updated_rows: List[Dict[str, Any]] = []
                 updated_at_field = source.get("pg", {}).get("updated_at_field")
-                for pg_id in ids:
-                    pg_row = refreshed.get(pg_id)
+                for r in rows:
+                    pg_id = str(r["pg_id"])
+                    pg_row = refreshed.get(pg_id) if refreshed is not None else r
                     if not pg_row:
                         continue
-                    text = pg_row.get(source["pg"]["text_field"], "")
+                    text = pg_row.get(source["pg"]["text_field"], "") or pg_row.get("text", "")
                     new_row = {
                         "pg_id": pg_id,
                         "text": text,
@@ -245,9 +298,15 @@ def sync_source(
                     }
                     if updated_at_field and updated_at_field in pg_row:
                         new_row["updated_at"] = pg_row.get(updated_at_field)
-                    for field in extra_fields:
+                    for field in (base_extra_fields if not supports_tpdb_fields else source_cfg["pg"]["extra_fields"]):
                         if field in pg_row:
                             new_row[field] = pg_row.get(field)
+                    tpdb_key = tpdb_content_id_by_pg_id.get(pg_id) or pg_id
+                    tpdb_row = tpdb_rows_by_key.get(tpdb_key)
+                    if tpdb_row:
+                        for field in tpdb_fields:
+                            if field in tpdb_row:
+                                new_row[field] = tpdb_row.get(field)
                     updated_rows.append(new_row)
                 rows = updated_rows
                 logger.info(
