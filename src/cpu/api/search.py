@@ -620,6 +620,135 @@ def search(
     }
 
 
+def _keyword_hit_score(query: str, title: str) -> float:
+    q = (query or "").strip().lower()
+    t = (title or "").strip().lower()
+    if not q or not t:
+        return 0.0
+    if q == t:
+        return 1.0
+    pos = t.find(q)
+    if pos < 0:
+        return 0.1
+    return float(max(0.2, 0.9 / (1 + pos)))
+
+
+@app.get("/search_keyword")
+def search_keyword(
+    q: str = Query(..., description="keyword query text"),
+    topk: int = Query(20, ge=1, le=100),
+    exclude_nsfw: bool = Query(True),
+    tmdb_only: bool = Query(False, description="only return items with tmdb_id"),
+    size_min_gb: float | None = Query(None, ge=0, description="min size in GB"),
+    size_sort: str | None = Query(None, description="size sort: asc/desc"),
+    page_size: int = Query(20, ge=1, le=100),
+    cursor: int = Query(0, ge=0, description="cursor offset for pagination"),
+    sources: str | None = Query(None, description="comma-separated source names; default uses sources with pg.keyword_search=true"),
+    _: Dict[str, Any] | None = Depends(require_user),
+) -> Dict[str, Any]:
+    cleaned_query, _ = extract_query_filters(q)
+    if not cleaned_query:
+        raise HTTPException(status_code=400, detail="Empty query")
+    size_sort_norm = (size_sort or "").strip().lower()
+    size_min_bytes = None
+    if size_min_gb is not None:
+        size_min_bytes = int(max(size_min_gb, 0) * (1024**3))
+
+    if sources:
+        selected_sources = [s.strip() for s in sources.split(",") if s.strip()]
+    else:
+        selected_sources = [s["name"] for s in (cfg.sources or []) if (s.get("pg") or {}).get("keyword_search")]
+        if not selected_sources:
+            selected_sources = [s["name"] for s in (cfg.sources or []) if s.get("pg")]
+
+    per_source_limit = min(2000, max(cursor + page_size * 3, topk * 3))
+    candidates: List[SearchResult] = []
+    for source_name in selected_sources:
+        source_cfg = source_map.get(source_name)
+        if not source_cfg:
+            continue
+        pg_cfg = source_cfg.get("pg", {})
+        tmdb_field = pg_cfg.get("tmdb_only_field", "tmdb_id")
+        fields = set([pg_cfg.get("id_field"), pg_cfg.get("text_field")] + pg_cfg.get("extra_fields", []))
+        if tmdb_only and tmdb_field not in fields:
+            continue
+        where_clauses: List[str] = []
+        base_where = pg_cfg.get("where")
+        if base_where:
+            where_clauses.append(str(base_where))
+        if tmdb_only and tmdb_field in fields:
+            where_clauses.append(f"{tmdb_field} IS NOT NULL")
+        size_field = _safe_identifier(pg_cfg.get("size_field", "size"))
+        if size_min_bytes and size_field and size_field in fields:
+            where_clauses.append(f"t.{size_field} >= {size_min_bytes}")
+        merged_where = _merge_where(where_clauses)
+        rows_source_cfg = {
+            **source_cfg,
+            "pg": {
+                **pg_cfg,
+                "where": merged_where or pg_cfg.get("where"),
+            },
+        }
+        keyword_hits = pg_client.search_by_keyword(rows_source_cfg, cleaned_query, limit=per_source_limit)
+        if not keyword_hits:
+            continue
+        ids = [str(r["pg_id"]) for r in keyword_hits if r.get("pg_id")]
+        rows = pg_client.fetch_by_ids(rows_source_cfg, ids)
+        sync_scores = pg_client.fetch_sync_scores(source_name, ids)
+        for hit in keyword_hits:
+            pg_id = str(hit.get("pg_id") or "")
+            if not pg_id:
+                continue
+            row = rows.get(pg_id) or {}
+            title = row.get(pg_cfg.get("text_field") or "", "") or hit.get("title") or ""
+            nsfw_score = float((sync_scores.get(pg_id) or {}).get("nsfw_score") or 0.0)
+            nsfw_flag = (
+                nsfw_score >= float(cfg.nsfw_threshold)
+                if source_cfg.get("tagging", {}).get("nsfw", True)
+                else False
+            )
+            if exclude_nsfw and nsfw_flag:
+                continue
+            meta = {}
+            for k, v in row.items():
+                if k in (pg_cfg.get("id_field"), pg_cfg.get("text_field")):
+                    continue
+                meta[k] = _sanitize_value(v)
+            candidates.append(
+                SearchResult(
+                    score=_keyword_hit_score(cleaned_query, str(title)),
+                    source=source_name,
+                    pg_id=pg_id,
+                    title=str(title),
+                    nsfw=bool(nsfw_flag),
+                    nsfw_score=float(nsfw_score),
+                    metadata=meta,
+                )
+            )
+    candidates.sort(key=lambda x: x.score, reverse=True)
+    deduped = _dedupe_search_results(candidates)
+    if size_sort_norm in {"asc", "desc"}:
+        reverse = size_sort_norm == "desc"
+
+        def sort_key(item: SearchResult) -> tuple[int, float, float]:
+            size_val = _meta_size(item.metadata)
+            missing = 1 if size_val is None else 0
+            if size_val is None:
+                size_val = 0.0
+            size_key = -size_val if reverse else size_val
+            return (missing, size_key, -item.score)
+
+        deduped.sort(key=sort_key)
+    sliced = deduped[cursor : cursor + page_size]
+    next_cursor = cursor + page_size if len(deduped) > cursor + page_size else None
+    return {
+        "count": len(sliced),
+        "next_cursor": next_cursor,
+        "page_size": page_size,
+        "results": [e.model_dump() for e in sliced],
+    }
+
+
 @app.get("/torrent_files")
 def torrent_files(
     info_hash: str = Query(..., description="info_hash in \\x... text form"),

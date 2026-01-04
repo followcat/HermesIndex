@@ -118,6 +118,22 @@ class PGClient:
         with self.connect() as conn, conn.cursor() as cur:
             cur.execute(sql, (source, pg_id, error[:512]))
 
+    def fetch_sync_scores(self, source: str, ids: Sequence[str]) -> Dict[str, Dict[str, Any]]:
+        if not ids:
+            return {}
+        sql_text = """
+        SELECT pg_id, nsfw_score, updated_at
+        FROM sync_state
+        WHERE source = %s AND pg_id = ANY(%s)
+        """
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(sql_text, (source, list(ids)))
+            rows = cur.fetchall()
+            result: Dict[str, Dict[str, Any]] = {}
+            for row in rows:
+                result[str(row.get("pg_id"))] = dict(row)
+            return result
+
     def fetch_by_ids(
         self,
         source: Dict[str, Any],
