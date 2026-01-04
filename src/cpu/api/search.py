@@ -1,5 +1,6 @@
 import os
 import re
+import logging
 import threading
 import time
 from datetime import datetime
@@ -12,6 +13,7 @@ from fastapi import Depends, FastAPI, HTTPException, Header, Query, Request
 from pydantic import BaseModel
 
 from cpu.config import load_config
+from cpu.clients.bitmagnet_graphql import BitmagnetGraphQLClient
 from cpu.core.embedder import LocalEmbedder
 from cpu.core.utils import normalize_title_text
 from cpu.clients.gpu_client import GPUClient
@@ -22,6 +24,8 @@ from cpu.services.auth_store import AuthStore
 
 CONFIG_PATH = os.getenv("CONFIG_PATH", "configs/example.yaml")
 
+logger = logging.getLogger(__name__)
+
 cfg = load_config(CONFIG_PATH)
 pg_client = PGClient(cfg.postgres["dsn"])
 vector_store = create_vector_store(cfg.vector_store)
@@ -29,6 +33,16 @@ gpu_client = GPUClient(cfg.gpu_endpoint) if cfg.gpu_endpoint else None
 local_embedder = None
 if cfg.local_embedder.get("enabled"):
     local_embedder = LocalEmbedder(cfg.local_embedder.get("model_name", "BAAI/bge-m3"))
+
+bitmagnet_graphql_client = None
+bitmagnet_graphql_endpoint = (cfg.bitmagnet or {}).get("graphql_endpoint") or (cfg.bitmagnet or {}).get(
+    "graphql_url"
+)
+if bitmagnet_graphql_endpoint:
+    bitmagnet_graphql_client = BitmagnetGraphQLClient(
+        str(bitmagnet_graphql_endpoint),
+        timeout=float((cfg.bitmagnet or {}).get("graphql_timeout_seconds", 15)),
+    )
 
 source_map: Dict[str, Dict[str, Any]] = {s["name"]: s for s in cfg.sources}
 
@@ -748,6 +762,62 @@ def search_keyword(
                 "where": merged_where or pg_cfg.get("where"),
             },
         }
+
+        if (
+            bitmagnet_graphql_client is not None
+            and source_name == "bitmagnet_torrents"
+            and pg_cfg.get("id_field") == "info_hash"
+        ):
+            try:
+                payload = bitmagnet_graphql_client.search_torrents(cleaned_query, limit=per_source_limit)
+                nodes = bitmagnet_graphql_client.extract_torrent_nodes(payload)
+            except Exception as exc:
+                nodes = []
+                logger.warning("Bitmagnet GraphQL keyword search failed; falling back to PG error=%s", exc)
+            if nodes:
+                ids = [str(n.get("infoHash") or "") for n in nodes if n.get("infoHash")]
+                sync_scores = pg_client.fetch_sync_scores(source_name, ids)
+                for node in nodes:
+                    pg_id = str(node.get("infoHash") or "")
+                    title = str(node.get("name") or "")
+                    if not pg_id or not title:
+                        continue
+                    if size_min_bytes is not None:
+                        try:
+                            if float(node.get("size") or 0) < float(size_min_bytes):
+                                continue
+                        except (TypeError, ValueError):
+                            pass
+                    if tmdb_only and not node.get("content"):
+                        continue
+                    nsfw_score = float((sync_scores.get(pg_id) or {}).get("nsfw_score") or 0.0)
+                    nsfw_flag = (
+                        nsfw_score >= float(cfg.nsfw_threshold)
+                        if source_cfg.get("tagging", {}).get("nsfw", True)
+                        else False
+                    )
+                    if exclude_nsfw and nsfw_flag:
+                        continue
+                    meta = {
+                        "size": node.get("size"),
+                        "files_count": node.get("filesCount"),
+                        "seeders": node.get("seeders"),
+                        "leechers": node.get("leechers"),
+                        "published_at": node.get("publishedAt"),
+                        "content": node.get("content"),
+                    }
+                    candidates.append(
+                        SearchResult(
+                            score=_keyword_hit_score(cleaned_query, title),
+                            source=source_name,
+                            pg_id=pg_id,
+                            title=title,
+                            nsfw=bool(nsfw_flag),
+                            nsfw_score=float(nsfw_score),
+                            metadata=_sanitize_value(meta) or {},
+                        )
+                    )
+                continue
         keyword_hits = pg_client.search_by_keyword(rows_source_cfg, cleaned_query, limit=per_source_limit)
         if not keyword_hits:
             continue
