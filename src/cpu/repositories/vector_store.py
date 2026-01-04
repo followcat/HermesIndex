@@ -166,6 +166,7 @@ class QdrantVectorStore(BaseVectorStore):
         try:
             from qdrant_client import QdrantClient
             from qdrant_client.http.models import Distance, VectorParams
+            from qdrant_client.http.exceptions import UnexpectedResponse
         except Exception as exc:  # pragma: no cover - optional dep
             raise ImportError("qdrant-client is required for Qdrant vector store") from exc
         self.dim = dim
@@ -181,14 +182,24 @@ class QdrantVectorStore(BaseVectorStore):
         init_error: Exception | None = None
         for _ in range(3):
             try:
-                collections = self.client.get_collections().collections
-                if collection not in [c.name for c in collections]:
-                    self.client.recreate_collection(
-                        collection_name=collection,
-                        vectors_config=vectors_config,
-                    )
+                self.client.get_collection(collection_name=collection)
                 init_error = None
                 break
+            except UnexpectedResponse as exc:
+                if getattr(exc, "status_code", None) == 404:
+                    try:
+                        self.client.recreate_collection(
+                            collection_name=collection,
+                            vectors_config=vectors_config,
+                        )
+                        init_error = None
+                        break
+                    except Exception as inner:
+                        init_error = inner
+                        time.sleep(0.5)
+                        continue
+                init_error = exc
+                time.sleep(0.5)
             except Exception as exc:  # transient (e.g. 502) or gateway issues
                 init_error = exc
                 time.sleep(0.5)
@@ -321,7 +332,7 @@ class QdrantVectorStore(BaseVectorStore):
             if must_conditions:
                 query_filter = Filter(must=must_conditions)
         query_vector = embedding[0].tolist()
-        if hasattr(self.client, "search"):
+        if self.client is not None and hasattr(self.client, "search"):
             hits = self.client.search(
                 collection_name=self.collection,
                 query_vector=query_vector,
@@ -330,7 +341,7 @@ class QdrantVectorStore(BaseVectorStore):
                 query_filter=query_filter,
                 offset=offset,
             )
-        elif hasattr(self.client, "search_points"):
+        elif self.client is not None and hasattr(self.client, "search_points"):
             hits = self.client.search_points(
                 collection_name=self.collection,
                 query_vector=query_vector,
@@ -340,9 +351,6 @@ class QdrantVectorStore(BaseVectorStore):
                 offset=offset,
             )
         else:
-            import httpx
-
-            base_url = self.url.rstrip("/")
             self._ensure_collection_http()
             filter_payload = None
             if metadata_filter and (
@@ -383,19 +391,17 @@ class QdrantVectorStore(BaseVectorStore):
                     )
                 if must_conditions:
                     filter_payload = {"must": must_conditions}
-            resp = httpx.post(
-                f"{base_url}/collections/{self.collection}/points/search",
-                json={
+            data = self._http_request(
+                "POST",
+                f"/collections/{self.collection}/points/search",
+                json_body={
                     "vector": query_vector,
                     "limit": topk,
                     "with_payload": True,
                     "filter": filter_payload,
                     "offset": offset,
                 },
-                timeout=30,
             )
-            resp.raise_for_status()
-            data = resp.json()
             hits = data.get("result", [])
         results: List[Dict[str, Any]] = []
         for hit in hits:
