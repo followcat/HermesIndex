@@ -496,8 +496,12 @@ def search(
     expanded_query = expand_query(cleaned_query, tmdb_extra)
     normalized_query = normalize_title_text(expanded_query)
     final_query = normalized_query or expanded_query
-    if "bge" in str(cfg.embedding_model_version).lower():
-        final_query = f"为这个句子生成用于检索的向量: {final_query}"
+    search_cfg = getattr(cfg, "search", {}) if hasattr(cfg, "search") else {}
+    query_prefix = None
+    if isinstance(search_cfg, dict):
+        query_prefix = search_cfg.get("query_prefix")
+    if query_prefix:
+        final_query = f"{query_prefix}{final_query}"
     query_vec = embed_query(final_query)
     genre_filters = filters.get("genres", [])
     fetch_k = min(100, max(topk, page_size))

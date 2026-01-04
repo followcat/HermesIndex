@@ -273,6 +273,8 @@ class PGClient:
             return []
         ident = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
         safe_fields = [f for f in fields if ident.fullmatch(str(f or ""))]
+        if ident.fullmatch(str(text_field or "")) and text_field not in safe_fields:
+            safe_fields.append(text_field)
         if not safe_fields:
             safe_fields = [text_field]
 

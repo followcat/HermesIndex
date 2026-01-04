@@ -18,6 +18,7 @@ class Config:
     bitmagnet: Dict[str, Any] = field(default_factory=dict)
     tmdb: Dict[str, Any] = field(default_factory=dict)
     tpdb: Dict[str, Any] = field(default_factory=dict)
+    search: Dict[str, Any] = field(default_factory=dict)
     auth: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -37,6 +38,7 @@ def load_config(path: str) -> Config:
         bitmagnet=raw.get("bitmagnet", {}),
         tmdb=raw.get("tmdb", {}),
         tpdb=raw.get("tpdb", {}),
+        search=raw.get("search", {}),
         auth=raw.get("auth", {}),
     )
 

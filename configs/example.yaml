@@ -6,6 +6,10 @@ local_embedder:
   enabled: false
   model_name: "BAAI/bge-m3"
 
+search:
+  # Optional query prefix for specific embedding models.
+  # query_prefix: "Represent this sentence for searching relevant passages: "
+
 postgres:
   dsn: "postgresql://user:password@localhost:5432/hermes"
   fetch_batch_size: 500
