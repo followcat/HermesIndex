@@ -171,9 +171,9 @@ def sync_source(
                 )
         if source.get("pg", {}).get("tpdb_enrich"):
             tpdb_refs = []
-            tpdb_cfg = source.get("pg", {})
-            default_content_type = tpdb_cfg.get("tpdb_content_type") or source.get("name")
-            default_content_source = tpdb_cfg.get("tpdb_content_source") or source.get("name")
+            tpdb_pg_cfg = source.get("pg", {})
+            default_content_type = tpdb_pg_cfg.get("tpdb_content_type") or source.get("name")
+            default_content_source = tpdb_pg_cfg.get("tpdb_content_source") or source.get("name")
             for r in rows:
                 content_type = r.get("type") or default_content_type
                 content_source = r.get("source") or default_content_source
@@ -189,7 +189,7 @@ def sync_source(
                             "text": r.get("text"),
                             "release_year": r.get("release_year"),
                             "site": r.get("site"),
-                            "tpdb_type": source.get("pg", {}).get("tpdb_type"),
+                            "tpdb_type": tpdb_pg_cfg.get("tpdb_type"),
                         }
                     )
             if tpdb_refs and tpdb_cfg.get("enabled") and tpdb_cfg.get("auto_enrich"):
