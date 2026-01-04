@@ -12,6 +12,23 @@ SYNC_LOOP=${SYNC_LOOP:-true}
 SYNC_LOOP_SLEEP=${SYNC_LOOP_SLEEP:-300}
 PID_DIR=${PID_DIR:-data/pids}
 
+append_no_proxy() {
+  local host=$1
+  local current=${NO_PROXY:-${no_proxy:-}}
+  if [[ -z "$current" ]]; then
+    export NO_PROXY="$host"
+    export no_proxy="$host"
+    return
+  fi
+  if [[ ",$current," != *",$host,"* ]]; then
+    export NO_PROXY="${current},${host}"
+    export no_proxy="${NO_PROXY}"
+  fi
+}
+append_no_proxy "127.0.0.1"
+append_no_proxy "localhost"
+append_no_proxy "::1"
+
 if [[ ! -f "$CONFIG_PATH" ]]; then
   echo "Config not found: $CONFIG_PATH" >&2
   exit 1
