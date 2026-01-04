@@ -3,6 +3,7 @@ set -euo pipefail
 
 CONFIG_PATH=${CONFIG_PATH:-configs/bitmagnet.yaml}
 TMDB_LIMIT=${TMDB_LIMIT:-500}
+TMDB_ENABLE=${TMDB_ENABLE:-true}
 TPDB_LIMIT=${TPDB_LIMIT:-200}
 TPDB_ENABLE=${TPDB_ENABLE:-false}
 SYNC_TARGET=${SYNC_TARGET:-}
@@ -16,7 +17,7 @@ if [[ ! -f "$CONFIG_PATH" ]]; then
 fi
 
 echo "Config: $CONFIG_PATH"
-echo "TMDB enrich: loop mode, limit=$TMDB_LIMIT"
+echo "TMDB enrich: enabled=$TMDB_ENABLE loop mode, limit=$TMDB_LIMIT"
 echo "TPDB enrich: enabled=$TPDB_ENABLE limit=$TPDB_LIMIT"
 echo "Sync target: ${SYNC_TARGET:-all}"
 echo "Sync sources: ${SYNC_SOURCES}"
@@ -49,6 +50,33 @@ print(find_postgres_dsn(sys.argv[1]) or "")
 PY
 }
 
+get_schema() {
+  local path="$1"
+  python - "$path" <<'PY'
+import sys
+
+def find_schema(path):
+    in_bitmagnet = False
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            stripped = line.strip()
+            if stripped.startswith("#") or not stripped:
+                continue
+            if not line.startswith(" ") and stripped.startswith("bitmagnet:"):
+                in_bitmagnet = True
+                continue
+            if in_bitmagnet:
+                if not line.startswith(" "):
+                    break
+                if stripped.startswith("schema:"):
+                    value = stripped.split(":", 1)[1].strip().strip("\"")
+                    return value
+    return "hermes"
+
+print(find_schema(sys.argv[1]) or "hermes")
+PY
+}
+
 ensure_bitmagnet_views() {
   if ! command -v psql >/dev/null 2>&1; then
     echo "psql not found; skip auto view check" >&2
@@ -60,11 +88,17 @@ ensure_bitmagnet_views() {
     echo "postgres.dsn missing in config; skip auto view check" >&2
     return
   fi
+  local schema
+  schema=$(get_schema "$CONFIG_PATH")
   local files_view
   local content_view
-  files_view=$(psql "$dsn" -tAc "SELECT to_regclass('hermes.torrent_files_view')")
-  content_view=$(psql "$dsn" -tAc "SELECT to_regclass('hermes.content_view')")
-  if [[ -z "$files_view" || -z "$content_view" ]]; then
+  files_view=$(psql "$dsn" -tAc "SELECT to_regclass('${schema}.torrent_files_view')")
+  content_view=$(psql "$dsn" -tAc "SELECT to_regclass('${schema}.content_view')")
+  local tmdb_table
+  local tpdb_table
+  tmdb_table=$(psql "$dsn" -tAc "SELECT to_regclass('${schema}.tmdb_enrichment')")
+  tpdb_table=$(psql "$dsn" -tAc "SELECT to_regclass('${schema}.tpdb_enrichment')")
+  if [[ -z "$files_view" || -z "$content_view" || -z "$tmdb_table" || -z "$tpdb_table" ]]; then
     echo "Bitmagnet views missing; running setup"
     PYTHONPATH=src python -m cpu.services.bitmagnet_setup --config "$CONFIG_PATH"
   fi
@@ -81,8 +115,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
-PYTHONPATH=src python -m cpu.services.tmdb_enrich --config "$CONFIG_PATH" --limit "$TMDB_LIMIT" --loop &
-TMDB_PID=$!
+if [[ "$TMDB_ENABLE" == "true" ]]; then
+  PYTHONPATH=src python -m cpu.services.tmdb_enrich --config "$CONFIG_PATH" --limit "$TMDB_LIMIT" --loop &
+  TMDB_PID=$!
+fi
 if [[ "$TPDB_ENABLE" == "true" ]]; then
   PYTHONPATH=src python -m cpu.services.tpdb_enrich --config "$CONFIG_PATH" --limit "$TPDB_LIMIT" --loop &
   TPDB_PID=$!
