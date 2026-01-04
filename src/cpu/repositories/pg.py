@@ -284,10 +284,9 @@ class PGClient:
 
         statement = sql.SQL(
             """
-            SELECT DISTINCT ON ({text}) {id}::text AS pg_id, {text} AS title
+            SELECT {id}::text AS pg_id, {text} AS title
             FROM {table} AS t
             WHERE {where}
-            ORDER BY {text}, {id}
             LIMIT %s
             """
         ).format(

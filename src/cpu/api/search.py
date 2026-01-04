@@ -657,7 +657,9 @@ def search_keyword(
     if sources:
         selected_sources = [s.strip() for s in sources.split(",") if s.strip()]
     else:
-        selected_sources = [s["name"] for s in (cfg.sources or []) if s.get("pg")]
+        selected_sources = [s["name"] for s in (cfg.sources or []) if (s.get("pg") or {}).get("keyword_search")]
+        if not selected_sources:
+            selected_sources = [s["name"] for s in (cfg.sources or []) if s.get("pg")]
 
     per_source_limit = min(2000, max(cursor + page_size * 3, topk * 3))
     candidates: List[SearchResult] = []
