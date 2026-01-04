@@ -724,6 +724,9 @@ def _normalize_info_hash(value: str) -> str:
 
 
 def _node_has_tmdb(node: Dict[str, Any]) -> bool:
+    content_source = str(node.get("contentSource") or node.get("content_source") or "").lower()
+    if content_source == "tmdb":
+        return True
     content = node.get("content")
     if not isinstance(content, dict):
         return False
@@ -767,12 +770,22 @@ def search_keyword(
 
     keyword_backend = str((cfg.search or {}).get("keyword_backend") or "auto").strip().lower()
     if keyword_backend != "pg" and bitmagnet_graphql_client is not None:
-        per_source_limit = min(2000, max(cursor + page_size * 3, topk * 3))
+        per_source_limit = min(2000, max(page_size * 3, topk * 3))
         gql_limit_cap = int((cfg.bitmagnet or {}).get("graphql_search_limit_cap") or 200)
         gql_limit = min(per_source_limit, max(1, gql_limit_cap))
+        gql_offset = int(cursor or 0)
+        order_by = None
+        if size_sort_norm in {"asc", "desc"}:
+            order_by = [{"field": "size", "descending": size_sort_norm == "desc"}]
         try:
-            payload = bitmagnet_graphql_client.search_torrents(cleaned_query, limit=gql_limit)
+            payload = bitmagnet_graphql_client.search_torrents(
+                cleaned_query,
+                limit=gql_limit,
+                offset=gql_offset,
+                order_by=order_by,
+            )
             nodes = bitmagnet_graphql_client.extract_torrent_nodes(payload)
+            search_meta = bitmagnet_graphql_client.extract_search_meta(payload)
         except Exception as exc:
             logger.warning(
                 "Bitmagnet GraphQL keyword search failed endpoint=%s error=%s",
@@ -784,18 +797,31 @@ def search_keyword(
         candidates: List[SearchResult] = []
         ids: List[str] = []
         for node in nodes:
-            info_hash = _normalize_info_hash(str(node.get("infoHash") or ""))
+            info_hash = _normalize_info_hash(
+                str(
+                    node.get("infoHash")
+                    or (node.get("torrent") or {}).get("infoHash")
+                    or ""
+                )
+            )
             if info_hash:
                 ids.append(info_hash)
         sync_scores = pg_client.fetch_sync_scores("bitmagnet_torrents", ids)
         for node in nodes:
-            info_hash = _normalize_info_hash(str(node.get("infoHash") or ""))
-            title = str(node.get("name") or "")
+            info_hash = _normalize_info_hash(
+                str(
+                    node.get("infoHash")
+                    or (node.get("torrent") or {}).get("infoHash")
+                    or ""
+                )
+            )
+            torrent_obj = node.get("torrent") if isinstance(node.get("torrent"), dict) else {}
+            title = str(torrent_obj.get("name") or node.get("name") or node.get("title") or "")
             if not info_hash or not title:
                 continue
             if size_min_bytes is not None:
                 try:
-                    if float(node.get("size") or 0) < float(size_min_bytes):
+                    if float(torrent_obj.get("size") or node.get("size") or 0) < float(size_min_bytes):
                         continue
                 except (TypeError, ValueError):
                     pass
@@ -806,12 +832,15 @@ def search_keyword(
             if exclude_nsfw and nsfw_flag:
                 continue
             meta = {
-                "size": node.get("size"),
-                "files_count": node.get("filesCount"),
-                "seeders": node.get("seeders"),
-                "leechers": node.get("leechers"),
+                "size": torrent_obj.get("size") or node.get("size"),
+                "files_count": torrent_obj.get("filesCount") or node.get("filesCount"),
+                "seeders": node.get("seeders") or torrent_obj.get("seeders"),
+                "leechers": node.get("leechers") or torrent_obj.get("leechers"),
                 "published_at": node.get("publishedAt"),
                 "content": node.get("content"),
+                "content_source": node.get("contentSource"),
+                "content_id": node.get("contentId"),
+                "content_type": node.get("contentType") or (node.get("content") or {}).get("type"),
             }
             candidates.append(
                 SearchResult(
@@ -826,20 +855,10 @@ def search_keyword(
             )
         candidates.sort(key=lambda x: x.score, reverse=True)
         deduped = _dedupe_search_results(candidates)
-        if size_sort_norm in {"asc", "desc"}:
-            reverse = size_sort_norm == "desc"
-
-            def sort_key(item: SearchResult) -> tuple[int, float, float]:
-                size_val = _meta_size(item.metadata)
-                missing = 1 if size_val is None else 0
-                if size_val is None:
-                    size_val = 0.0
-                size_key = -size_val if reverse else size_val
-                return (missing, size_key, -item.score)
-
-            deduped.sort(key=sort_key)
-        sliced = deduped[cursor : cursor + page_size]
-        next_cursor = cursor + page_size if len(deduped) > cursor + page_size else None
+        sliced = deduped[:page_size]
+        next_cursor = None
+        if search_meta.get("hasNextPage"):
+            next_cursor = gql_offset + page_size
         return {
             "count": len(sliced),
             "next_cursor": next_cursor,

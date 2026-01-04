@@ -46,10 +46,64 @@ class BitmagnetGraphQLClient:
         suffix = f" status={last_status}" if last_status is not None else ""
         raise RuntimeError(f"Bitmagnet GraphQL request failed{suffix} error={last_exc}") from last_exc
 
-    def search_torrents(self, query_string: str, limit: int = 50) -> Dict[str, Any]:
+    def search_torrents(
+        self,
+        query_string: str,
+        limit: int = 50,
+        offset: int = 0,
+        order_by: List[Dict[str, Any]] | None = None,
+    ) -> Dict[str, Any]:
         variants = [
             (
-                "queryString",
+                "torrentContent.search",
+                """
+                query SearchTorrentContent($input: TorrentContentSearchQueryInput!) {
+                  torrentContent {
+                    search(input: $input) {
+                      totalCount
+                      hasNextPage
+                      items {
+                        infoHash
+                        title
+                        seeders
+                        leechers
+                        publishedAt
+                        contentType
+                        contentSource
+                        contentId
+                        torrent {
+                          infoHash
+                          name
+                          size
+                          filesCount
+                          seeders
+                          leechers
+                        }
+                        content {
+                          type
+                          title
+                          releaseYear
+                          collections { name type }
+                          attributes { key value }
+                        }
+                      }
+                    }
+                  }
+                }
+                """,
+                {
+                    "input": {
+                        "queryString": query_string,
+                        "limit": int(limit),
+                        "offset": int(offset),
+                        "totalCount": True,
+                        "hasNextPage": True,
+                        "orderBy": order_by or [{"field": "relevance", "descending": True}],
+                    }
+                },
+            ),
+            (
+                "torrents.queryString",
                 """
                 query SearchTorrents($query: String!, $limit: Int!) {
                   torrents(query: { queryString: $query }, limit: $limit) {
@@ -75,9 +129,10 @@ class BitmagnetGraphQLClient:
                   }
                 }
                 """,
+                {"query": query_string, "limit": int(limit)},
             ),
             (
-                "query",
+                "torrents.query",
                 """
                 query SearchTorrents($query: String!, $limit: Int!) {
                   torrents(query: { query: $query }, limit: $limit) {
@@ -103,9 +158,10 @@ class BitmagnetGraphQLClient:
                   }
                 }
                 """,
+                {"query": query_string, "limit": int(limit)},
             ),
             (
-                "text",
+                "torrents.text",
                 """
                 query SearchTorrents($query: String!, $limit: Int!) {
                   torrents(query: { text: $query }, limit: $limit) {
@@ -131,12 +187,13 @@ class BitmagnetGraphQLClient:
                   }
                 }
                 """,
+                {"query": query_string, "limit": int(limit)},
             ),
         ]
         last_exc: Exception | None = None
-        for label, gql in variants:
+        for label, gql, variables in variants:
             try:
-                return self._post(gql, {"query": query_string, "limit": int(limit)})
+                return self._post(gql, variables)
             except Exception as exc:
                 last_exc = exc
                 logger.warning("Bitmagnet GraphQL search variant=%s failed error=%s", label, exc)
@@ -146,6 +203,10 @@ class BitmagnetGraphQLClient:
     @staticmethod
     def extract_torrent_nodes(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
         data = payload.get("data") or {}
+        if isinstance(data.get("torrentContent"), dict):
+            search = (data.get("torrentContent") or {}).get("search") or {}
+            items = search.get("items") or []
+            return [item for item in items if isinstance(item, dict)]
         torrents = data.get("torrents") or {}
         edges = torrents.get("edges") or []
         nodes: List[Dict[str, Any]] = []
@@ -156,6 +217,18 @@ class BitmagnetGraphQLClient:
             if isinstance(node, dict):
                 nodes.append(node)
         return nodes
+
+    @staticmethod
+    def extract_search_meta(payload: Dict[str, Any]) -> Dict[str, Any]:
+        data = payload.get("data") or {}
+        if isinstance(data.get("torrentContent"), dict):
+            search = (data.get("torrentContent") or {}).get("search") or {}
+            return {
+                "totalCount": search.get("totalCount"),
+                "hasNextPage": search.get("hasNextPage"),
+            }
+        torrents = data.get("torrents") or {}
+        return {"totalCount": torrents.get("totalCount")}
 
     @staticmethod
     def total_count(payload: Dict[str, Any]) -> Optional[int]:
