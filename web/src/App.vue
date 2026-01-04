@@ -40,6 +40,9 @@
           />
           <button type="submit" :disabled="loading">{{ loading ? "搜索中..." : "搜索" }}</button>
         </form>
+        <div v-if="searchError" class="login-error" style="margin-top: 10px;">
+          {{ searchError }}
+        </div>
         <div class="filters">
           <label class="chip">
             <input v-model="searchMode" type="radio" value="semantic" />
@@ -523,6 +526,7 @@ const tmdbOnly = ref(true);
 const sizeMinGb = ref(0);
 const sizeSort = ref("");
 const loading = ref(false);
+const searchError = ref("");
 const results = ref([]);
 const selected = ref(null);
 const selectedFiles = ref([]);
@@ -1126,6 +1130,7 @@ async function runSearch(resetPage = false) {
     cursorStack.value = [];
   }
   loading.value = true;
+  searchError.value = "";
   try {
     const params = new URLSearchParams({
       q: query.value.trim(),
@@ -1152,6 +1157,7 @@ async function runSearch(resetPage = false) {
     }
   } catch (err) {
     console.error(err);
+    searchError.value = "搜索失败：后端服务不可用或配置不一致（可检查 CPU/GPU 服务是否运行）";
   } finally {
     loading.value = false;
   }
