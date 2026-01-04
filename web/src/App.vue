@@ -1440,6 +1440,12 @@ onUnmounted(() => {
   teardownMobileQuery();
 });
 
+watch(searchMode, (value) => {
+  if (value === "keyword" && tmdbOnly.value) {
+    tmdbOnly.value = false;
+  }
+});
+
 watch(
   [
     query,
