@@ -209,6 +209,7 @@ class QdrantVectorStore(BaseVectorStore):
         base_url = self.url.rstrip("/")
         url = f"{base_url}{path}"
         last_exc: Exception | None = None
+        last_status: int | None = None
         for attempt in range(3):
             try:
                 resp = httpx.request(
@@ -219,6 +220,8 @@ class QdrantVectorStore(BaseVectorStore):
                     timeout=self._http_timeout,
                 )
                 if resp.status_code in {502, 503, 504}:
+                    last_status = int(resp.status_code)
+                    last_exc = RuntimeError(f"HTTP {resp.status_code} from Qdrant")
                     time.sleep(0.3 * (attempt + 1))
                     continue
                 resp.raise_for_status()
@@ -226,14 +229,24 @@ class QdrantVectorStore(BaseVectorStore):
             except Exception as exc:
                 last_exc = exc
                 time.sleep(0.3 * (attempt + 1))
-        raise RuntimeError(f"Qdrant HTTP request failed: {method} {path} error={last_exc}") from last_exc
+        suffix = f" status={last_status}" if last_status is not None else ""
+        raise RuntimeError(
+            f"Qdrant HTTP request failed: {method} {path}{suffix} error={last_exc}"
+        ) from last_exc
 
     def _ensure_collection_http(self) -> None:
-        info = self._http_request("GET", f"/collections/{self.collection}")
-        if info.get("result") and info.get("status") == "ok":
+        try:
+            info = self._http_request("GET", f"/collections/{self.collection}")
+            if info.get("result") and info.get("status") == "ok":
+                return
+        except Exception:
+            # Qdrant may be temporarily unavailable (e.g. 502); defer collection ensure to later retries.
             return
         payload = {"vectors": {"size": int(self.dim), "distance": self._distance_name}}
-        self._http_request("PUT", f"/collections/{self.collection}", json_body=payload)
+        try:
+            self._http_request("PUT", f"/collections/{self.collection}", json_body=payload)
+        except Exception:
+            return
 
     def add(self, embeddings: np.ndarray, metas: List[Dict[str, Any]]) -> List[str]:
         points: List[Dict[str, Any]] = []
@@ -249,6 +262,7 @@ class QdrantVectorStore(BaseVectorStore):
             structs = [PointStruct(id=p["id"], vector=p["vector"], payload=p["payload"]) for p in points]
             self.client.upsert(collection_name=self.collection, points=structs, wait=True)
             return point_ids
+        self._ensure_collection_http()
         self._http_request("PUT", f"/collections/{self.collection}/points?wait=true", json_body={"points": points})
         return point_ids
 
@@ -329,6 +343,7 @@ class QdrantVectorStore(BaseVectorStore):
             import httpx
 
             base_url = self.url.rstrip("/")
+            self._ensure_collection_http()
             filter_payload = None
             if metadata_filter and (
                 metadata_filter.get("has_tmdb")
@@ -397,6 +412,7 @@ class QdrantVectorStore(BaseVectorStore):
         if self.client is not None:
             info = self.client.get_collection(collection_name=self.collection)
             return int(info.points_count or 0)
+        self._ensure_collection_http()
         data = self._http_request("GET", f"/collections/{self.collection}")
         result = data.get("result") or {}
         return int((result.get("points_count") or 0))

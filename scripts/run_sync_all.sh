@@ -161,7 +161,13 @@ write_pidfile
 run_sync_once() {
   SYNC_PIDS=()
   if [[ -n "$SYNC_TARGET" ]]; then
+    set +e
     PYTHONPATH=src python -m cpu.services.sync_runner --config "$CONFIG_PATH" --source "$SYNC_TARGET"
+    rc=$?
+    set -e
+    if [[ $rc -ne 0 ]]; then
+      echo "WARN: sync_runner exited rc=$rc (source=$SYNC_TARGET); will retry next loop" >&2
+    fi
     return
   fi
   IFS=',' read -r -a source_list <<< "$SYNC_SOURCES"
@@ -173,7 +179,19 @@ run_sync_once() {
     PYTHONPATH=src python -m cpu.services.sync_runner --config "$CONFIG_PATH" --source "$source" &
     SYNC_PIDS+=("$!")
   done
-  wait
+  any_fail=0
+  set +e
+  for pid in "${SYNC_PIDS[@]}"; do
+    wait "$pid"
+    rc=$?
+    if [[ $rc -ne 0 ]]; then
+      any_fail=1
+    fi
+  done
+  set -e
+  if [[ $any_fail -ne 0 ]]; then
+    echo "WARN: one or more sync_runner processes failed; will retry next loop" >&2
+  fi
 }
 
 if [[ "$SYNC_LOOP" == "true" ]]; then
