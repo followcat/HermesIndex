@@ -43,25 +43,25 @@
         <div v-if="searchError" class="login-error" style="margin-top: 10px;">
           {{ searchError }}
         </div>
-        <div class="filters">
-          <label class="chip">
-            <input v-model="searchMode" type="radio" value="semantic" />
-            语义
-          </label>
-          <label class="chip">
-            <input v-model="searchMode" type="radio" value="keyword" />
-            关键词
-          </label>
-          <label class="chip">
-            <input v-model="excludeNsfw" type="checkbox" />
-            排除 NSFW
-          </label>
-          <label class="chip">
-            <input v-model="tmdbOnly" type="checkbox" />
-            仅 TMDB 记录
-          </label>
-          <label class="chip">
-            最小大小(GB)
+	        <div class="filters">
+	          <label class="chip">
+	            <input v-model="searchMode" type="radio" value="semantic" />
+	            语义
+	          </label>
+	          <label class="chip">
+	            <input v-model="searchMode" type="radio" value="keyword" />
+	            关键词
+	          </label>
+	          <label :class="['chip', searchMode === 'keyword' ? 'chip--disabled' : '']">
+	            <input v-model="excludeNsfw" type="checkbox" :disabled="searchMode === 'keyword'" />
+	            排除 NSFW
+	          </label>
+	          <label :class="['chip', searchMode === 'keyword' ? 'chip--disabled' : '']">
+	            <input v-model="tmdbOnly" type="checkbox" :disabled="searchMode === 'keyword'" />
+	            仅 TMDB 记录
+	          </label>
+	          <label class="chip">
+	            最小大小(GB)
             <input
               v-model.number="sizeMinGb"
               type="number"
@@ -520,11 +520,13 @@ const searchMode = ref("semantic");
 const pageSize = ref(20);
 const cursor = ref(0);
 const nextCursor = ref(null);
-const cursorStack = ref([]);
-const excludeNsfw = ref(true);
-const tmdbOnly = ref(true);
-const sizeMinGb = ref(0);
-const sizeSort = ref("");
+	const cursorStack = ref([]);
+	const excludeNsfw = ref(true);
+	const tmdbOnly = ref(true);
+	const semanticExcludeNsfw = ref(true);
+	const semanticTmdbOnly = ref(true);
+	const sizeMinGb = ref(0);
+	const sizeSort = ref("");
 const loading = ref(false);
 const searchError = ref("");
 const results = ref([]);
@@ -1446,11 +1448,19 @@ onUnmounted(() => {
   teardownMobileQuery();
 });
 
-watch(searchMode, (value) => {
-  if (value === "keyword" && tmdbOnly.value) {
-    tmdbOnly.value = false;
-  }
-});
+	watch(searchMode, (value, prev) => {
+	  if (value === "keyword") {
+	    semanticExcludeNsfw.value = excludeNsfw.value;
+	    semanticTmdbOnly.value = tmdbOnly.value;
+	    excludeNsfw.value = false;
+	    tmdbOnly.value = false;
+	    return;
+	  }
+	  if (prev === "keyword") {
+	    excludeNsfw.value = semanticExcludeNsfw.value;
+	    tmdbOnly.value = semanticTmdbOnly.value;
+	  }
+	});
 
 watch(
   [

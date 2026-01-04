@@ -270,6 +270,16 @@ input {
   font-weight: 600;
 }
 
+.chip--disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.chip--disabled input,
+.chip--disabled select {
+  cursor: not-allowed;
+}
+
 .chip-input,
 .chip-select {
   margin-left: 6px;
