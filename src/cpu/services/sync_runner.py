@@ -171,10 +171,13 @@ def sync_source(
                 )
         if source.get("pg", {}).get("tpdb_enrich"):
             tpdb_refs = []
+            tpdb_cfg = source.get("pg", {})
+            default_content_type = tpdb_cfg.get("tpdb_content_type") or source.get("name")
+            default_content_source = tpdb_cfg.get("tpdb_content_source") or source.get("name")
             for r in rows:
-                content_type = r.get("type")
-                content_source = r.get("source")
-                content_id = r.get("id")
+                content_type = r.get("type") or default_content_type
+                content_source = r.get("source") or default_content_source
+                content_id = r.get("id") or r.get("pg_id")
                 if content_type and content_source and content_id:
                     tpdb_refs.append(
                         {
@@ -183,6 +186,7 @@ def sync_source(
                             "content_id": str(content_id),
                             "title": r.get("title"),
                             "original_title": r.get("original_title"),
+                            "text": r.get("text"),
                             "release_year": r.get("release_year"),
                             "site": r.get("site"),
                             "tpdb_type": source.get("pg", {}).get("tpdb_type"),
