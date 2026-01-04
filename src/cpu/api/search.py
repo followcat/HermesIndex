@@ -35,13 +35,18 @@ if cfg.local_embedder.get("enabled"):
     local_embedder = LocalEmbedder(cfg.local_embedder.get("model_name", "BAAI/bge-m3"))
 
 bitmagnet_graphql_client = None
-bitmagnet_graphql_endpoint = (cfg.bitmagnet or {}).get("graphql_endpoint") or (cfg.bitmagnet or {}).get(
-    "graphql_url"
-)
+bitmagnet_cfg = cfg.bitmagnet or {}
+bitmagnet_graphql_endpoint = bitmagnet_cfg.get("graphql_endpoint") or bitmagnet_cfg.get("graphql_url")
+if not bitmagnet_graphql_endpoint:
+    host = bitmagnet_cfg.get("host")
+    if host:
+        scheme = str(bitmagnet_cfg.get("graphql_scheme") or "http")
+        port = int(bitmagnet_cfg.get("graphql_port") or 3333)
+        bitmagnet_graphql_endpoint = f"{scheme}://{host}:{port}/graphql"
 if bitmagnet_graphql_endpoint:
     bitmagnet_graphql_client = BitmagnetGraphQLClient(
         str(bitmagnet_graphql_endpoint),
-        timeout=float((cfg.bitmagnet or {}).get("graphql_timeout_seconds", 15)),
+        timeout=float(bitmagnet_cfg.get("graphql_timeout_seconds", 15)),
     )
 
 source_map: Dict[str, Dict[str, Any]] = {s["name"]: s for s in cfg.sources}

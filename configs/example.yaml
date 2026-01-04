@@ -25,8 +25,10 @@ bitmagnet:
   schema: "hermes"
   create_schema: true
   # Optional: Bitmagnet GraphQL endpoint for fast keyword search on torrents.
-  # Usually served by bitmagnet at :3333/graphql.
+  # Defaults to http://{bitmagnet.host}:3333/graphql when not set.
   graphql_endpoint: "http://127.0.0.1:3333/graphql"
+  # graphql_scheme: "http"
+  # graphql_port: 3333
   graphql_timeout_seconds: 15
 
 # TMDB enrichment (optional, uses API key from env)
