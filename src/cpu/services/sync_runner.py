@@ -326,18 +326,38 @@ def sync_source(
                 }
             )
         add_start = time.perf_counter()
-        labels = vector_store.add(np.asarray(embeddings, dtype="float32"), metas)
+        try:
+            labels = vector_store.add(np.asarray(embeddings, dtype="float32"), metas)
+        except Exception as exc:
+            logger.warning(
+                "Vector store add failed; will retry later source=%s error=%s",
+                source["name"],
+                exc,
+            )
+            return {"rows": 0.0, "batch_cost": time.perf_counter() - batch_start}
         add_cost = time.perf_counter() - add_start
         for meta, label, update in zip(metas, labels, updates):
             update["vector_id"] = label
         upsert_start = time.perf_counter()
-        pg_client.upsert_sync_state(source["name"], updates)
+        try:
+            pg_client.upsert_sync_state(source["name"], updates)
+        except Exception as exc:
+            logger.warning(
+                "Sync state upsert failed; will retry later source=%s error=%s",
+                source["name"],
+                exc,
+            )
+            return {"rows": 0.0, "batch_cost": time.perf_counter() - batch_start}
         upsert_cost = time.perf_counter() - upsert_start
+        try:
+            index_size = vector_store.size()
+        except Exception:
+            index_size = -1
         logger.info(
             "Synced batch size=%d for source=%s, total_index_size=%d infer_cost=%.3fs add_cost=%.3fs upsert_cost=%.3fs",
             len(rows),
             source["name"],
-            vector_store.size(),
+            index_size,
             infer_cost,
             add_cost,
             upsert_cost,
@@ -366,7 +386,11 @@ def sync_source(
             ids = futures.pop(future, [])
             for pg_id in ids:
                 in_flight.discard(pg_id)
-            result = future.result()
+            try:
+                result = future.result()
+            except Exception as exc:
+                logger.warning("Batch failed source=%s error=%s", source["name"], exc)
+                continue
             total_rows += int(result["rows"])
             total_batches += 1
             total_time += float(result["batch_cost"])
