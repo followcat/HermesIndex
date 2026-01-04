@@ -22,6 +22,9 @@ class BitmagnetGraphQLClient:
                         json={"query": query, "variables": variables},
                         headers={"Content-Type": "application/json"},
                     )
+                if resp.status_code == 422:
+                    # Some GraphQL servers return 422 for parse/validation errors.
+                    raise RuntimeError(f"HTTP 422 from Bitmagnet GraphQL: {resp.text}")
                 if resp.status_code in {502, 503, 504}:
                     last_status = int(resp.status_code)
                     last_exc = RuntimeError(f"HTTP {resp.status_code} from Bitmagnet GraphQL")
@@ -89,4 +92,3 @@ class BitmagnetGraphQLClient:
             return int(total) if total is not None else None
         except (TypeError, ValueError):
             return None
-

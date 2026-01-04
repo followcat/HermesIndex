@@ -34,6 +34,8 @@ bitmagnet:
   # graphql_scheme: "http"
   # graphql_port: 3333
   graphql_timeout_seconds: 15
+  # Some deployments cap the max 'limit' accepted by GraphQL; keep this small to avoid 422.
+  graphql_search_limit_cap: 200
 
 # TMDB enrichment (optional, uses API key from env)
 tmdb:

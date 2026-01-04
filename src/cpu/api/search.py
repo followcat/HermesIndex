@@ -768,8 +768,10 @@ def search_keyword(
     keyword_backend = str((cfg.search or {}).get("keyword_backend") or "auto").strip().lower()
     if keyword_backend != "pg" and bitmagnet_graphql_client is not None:
         per_source_limit = min(2000, max(cursor + page_size * 3, topk * 3))
+        gql_limit_cap = int((cfg.bitmagnet or {}).get("graphql_search_limit_cap") or 200)
+        gql_limit = min(per_source_limit, max(1, gql_limit_cap))
         try:
-            payload = bitmagnet_graphql_client.search_torrents(cleaned_query, limit=per_source_limit)
+            payload = bitmagnet_graphql_client.search_torrents(cleaned_query, limit=gql_limit)
             nodes = bitmagnet_graphql_client.extract_torrent_nodes(payload)
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"Bitmagnet GraphQL search failed: {exc}") from exc
