@@ -229,6 +229,7 @@ class QdrantVectorStore(BaseVectorStore):
                     json=json_body,
                     headers=self._http_headers(),
                     timeout=self._http_timeout,
+                    trust_env=False,
                 )
                 if resp.status_code in {502, 503, 504}:
                     last_status = int(resp.status_code)
@@ -268,11 +269,15 @@ class QdrantVectorStore(BaseVectorStore):
             point_ids.append(point_id)
             points.append({"id": point_id, "vector": emb.tolist(), "payload": meta})
         if self.client is not None:
-            from qdrant_client.http.models import PointStruct
+            try:
+                from qdrant_client.http.models import PointStruct
 
-            structs = [PointStruct(id=p["id"], vector=p["vector"], payload=p["payload"]) for p in points]
-            self.client.upsert(collection_name=self.collection, points=structs, wait=True)
-            return point_ids
+                structs = [PointStruct(id=p["id"], vector=p["vector"], payload=p["payload"]) for p in points]
+                self.client.upsert(collection_name=self.collection, points=structs, wait=True)
+                return point_ids
+            except Exception:
+                # Qdrant may be temporarily unavailable (e.g. 502); fall back to raw HTTP retries.
+                self.client = None
         self._ensure_collection_http()
         self._http_request("PUT", f"/collections/{self.collection}/points?wait=true", json_body={"points": points})
         return point_ids
@@ -332,25 +337,34 @@ class QdrantVectorStore(BaseVectorStore):
             if must_conditions:
                 query_filter = Filter(must=must_conditions)
         query_vector = embedding[0].tolist()
+        hits = None
         if self.client is not None and hasattr(self.client, "search"):
-            hits = self.client.search(
-                collection_name=self.collection,
-                query_vector=query_vector,
-                limit=topk,
-                with_payload=True,
-                query_filter=query_filter,
-                offset=offset,
-            )
+            try:
+                hits = self.client.search(
+                    collection_name=self.collection,
+                    query_vector=query_vector,
+                    limit=topk,
+                    with_payload=True,
+                    query_filter=query_filter,
+                    offset=offset,
+                )
+            except Exception:
+                self.client = None
+                hits = None
         elif self.client is not None and hasattr(self.client, "search_points"):
-            hits = self.client.search_points(
-                collection_name=self.collection,
-                query_vector=query_vector,
-                limit=topk,
-                with_payload=True,
-                query_filter=query_filter,
-                offset=offset,
-            )
-        else:
+            try:
+                hits = self.client.search_points(
+                    collection_name=self.collection,
+                    query_vector=query_vector,
+                    limit=topk,
+                    with_payload=True,
+                    query_filter=query_filter,
+                    offset=offset,
+                )
+            except Exception:
+                self.client = None
+                hits = None
+        if hits is None:
             self._ensure_collection_http()
             filter_payload = None
             if metadata_filter and (
@@ -416,8 +430,11 @@ class QdrantVectorStore(BaseVectorStore):
 
     def size(self) -> int:
         if self.client is not None:
-            info = self.client.get_collection(collection_name=self.collection)
-            return int(info.points_count or 0)
+            try:
+                info = self.client.get_collection(collection_name=self.collection)
+                return int(info.points_count or 0)
+            except Exception:
+                self.client = None
         self._ensure_collection_http()
         data = self._http_request("GET", f"/collections/{self.collection}")
         result = data.get("result") or {}
