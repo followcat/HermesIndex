@@ -275,9 +275,26 @@ class PGClient:
         safe_fields = [f for f in fields if ident.fullmatch(str(f or ""))]
         if not safe_fields:
             safe_fields = [text_field]
-        clause_sql = sql.SQL(" OR ").join(
-            [sql.SQL("{} ILIKE %s").format(sql.Identifier("t", f)) for f in safe_fields]
+
+        raw_pattern = f"%{query}%"
+        strip_chars = " \t\r\n·・._-—–:：()（）[]【】{}《》\"'"
+        normalized_query = query.translate({ord(ch): None for ch in strip_chars}).lower()
+        normalized_pattern = f"%{normalized_query}%"
+        enable_normalize = bool(pg_cfg.get("keyword_normalize")) or bool(
+            re.search(r"[\u4e00-\u9fff]", query)
         )
+
+        def field_clause(field: str) -> sql.Composable:
+            base = sql.SQL("{} ILIKE %s").format(sql.Identifier("t", field))
+            if not enable_normalize or not normalized_query:
+                return base
+            normalized = sql.SQL("translate(lower({}), {}, '') LIKE %s").format(
+                sql.Identifier("t", field),
+                sql.Literal(strip_chars),
+            )
+            return sql.SQL("({} OR {})").format(base, normalized)
+
+        clause_sql = sql.SQL(" OR ").join([field_clause(f) for f in safe_fields])
         where_sql: sql.Composable = sql.SQL("({})").format(clause_sql)
         if where_extra:
             where_sql = sql.SQL("{} AND ({})").format(where_sql, sql.SQL(str(where_extra)))
@@ -295,7 +312,12 @@ class PGClient:
             table=self._table_identifier(table),
             where=where_sql,
         )
-        params = [f"%{query}%"] * len(safe_fields) + [limit]
+        params: List[Any] = []
+        for _ in safe_fields:
+            params.append(raw_pattern)
+            if enable_normalize and normalized_query:
+                params.append(normalized_pattern)
+        params.append(limit)
         with self.connect() as conn, conn.cursor() as cur:
             cur.execute(statement, params)
             return cur.fetchall()
