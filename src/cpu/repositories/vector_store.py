@@ -174,7 +174,9 @@ class QdrantVectorStore(BaseVectorStore):
         self.metric = metric
         self.url = url
         distance = Distance.COSINE if metric == "cosine" else Distance.DOT
-        self.client = QdrantClient(url=url, api_key=api_key, timeout=60)
+        # qdrant-client defaults to probing server version via GET / (can be noisy and may fail transiently),
+        # so disable compatibility checks and rely on request retries/fallback instead.
+        self.client = QdrantClient(url=url, api_key=api_key, timeout=60, check_compatibility=False)
         self._api_key = api_key
         self._http_timeout = 30
         self._distance_name = "Cosine" if metric == "cosine" else "Dot"
