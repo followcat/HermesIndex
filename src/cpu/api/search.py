@@ -964,10 +964,30 @@ def search_keyword(
 @app.get("/torrent_files")
 def torrent_files(
     info_hash: str = Query(..., description="info_hash in \\x... text form"),
+    limit: int = Query(2000, ge=1, le=20000),
     _: Dict[str, Any] | None = Depends(require_user),
 ) -> Dict[str, Any]:
+    normalized = _normalize_info_hash(info_hash)
+    if not normalized:
+        raise HTTPException(status_code=400, detail="Invalid info_hash")
+    keyword_backend = str((cfg.search or {}).get("keyword_backend") or "auto").strip().lower()
+    if keyword_backend != "pg" and bitmagnet_graphql_client is not None:
+        try:
+            payload = bitmagnet_graphql_client.torrent_files(normalized, limit=int(limit))
+            parsed = bitmagnet_graphql_client.extract_torrent_files(payload)
+            files = parsed.get("items") or []
+            return {
+                "count": len(files),
+                "files": [TorrentFile(**r).model_dump() for r in files],
+            }
+        except Exception as exc:
+            logger.warning(
+                "Bitmagnet GraphQL torrent_files failed endpoint=%s error=%s",
+                getattr(bitmagnet_graphql_client, "endpoint", ""),
+                exc,
+            )
     schema = (cfg.bitmagnet or {}).get("schema", "hermes")
-    rows = pg_client.fetch_torrent_files(schema, info_hash)
+    rows = pg_client.fetch_torrent_files(schema, normalized, limit=int(limit))
     return {"count": len(rows), "files": [TorrentFile(**r).model_dump() for r in rows]}
 
 

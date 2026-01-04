@@ -230,6 +230,67 @@ class BitmagnetGraphQLClient:
         torrents = data.get("torrents") or {}
         return {"totalCount": torrents.get("totalCount")}
 
+    def torrent_files(
+        self,
+        info_hash: str,
+        limit: int = 2000,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
+        gql = """
+        query TorrentFiles($input: TorrentFilesQueryInput!) {
+          torrent {
+            files(input: $input) {
+              totalCount
+              hasNextPage
+              items {
+                index
+                path
+                extension
+                size
+                updatedAt
+              }
+            }
+          }
+        }
+        """
+        variables: Dict[str, Any] = {
+            "input": {
+                "limit": int(limit),
+                "offset": int(offset),
+                "totalCount": True,
+                "hasNextPage": True,
+                "infoHashes": [info_hash],
+                "orderBy": [{"field": "index", "descending": False}],
+            }
+        }
+        return self._post(gql, variables)
+
+    @staticmethod
+    def extract_torrent_files(payload: Dict[str, Any]) -> Dict[str, Any]:
+        data = payload.get("data") or {}
+        torrent = data.get("torrent") or {}
+        files = torrent.get("files") or {}
+        items = files.get("items") or []
+        out_items: List[Dict[str, Any]] = []
+        if isinstance(items, list):
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                out_items.append(
+                    {
+                        "index": item.get("index"),
+                        "path": item.get("path"),
+                        "extension": item.get("extension"),
+                        "size": item.get("size"),
+                        "updated_at": item.get("updatedAt"),
+                    }
+                )
+        return {
+            "totalCount": files.get("totalCount"),
+            "hasNextPage": files.get("hasNextPage"),
+            "items": out_items,
+        }
+
     @staticmethod
     def total_count(payload: Dict[str, Any]) -> Optional[int]:
         data = payload.get("data") or {}
