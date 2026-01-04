@@ -21,12 +21,16 @@ find_pids() {
 }
 
 pidfile_path() {
-  python - "$CONFIG_PATH" <<'PY'
+  python - "$PID_DIR" "$CONFIG_PATH" <<'PY'
 import hashlib
+import os
 import sys
 
-path = sys.argv[1].encode("utf-8")
-print(f"data/pids/run_sync_all.{hashlib.sha1(path).hexdigest()}.pid")
+pid_dir = sys.argv[1]
+cfg_path = os.path.abspath(sys.argv[2])
+key = cfg_path.encode("utf-8")
+name = f"run_sync_all.{hashlib.sha1(key).hexdigest()}.pid"
+print(os.path.join(pid_dir, name))
 PY
 }
 
@@ -40,30 +44,64 @@ stop_pid() {
   fi
 }
 
+dedupe_add_pid() {
+  local pid=$1
+  [[ -z "$pid" ]] && return
+  [[ "$pid" =~ ^[0-9]+$ ]] || return
+  if [[ -z "${SEEN_PIDS[$pid]:-}" ]]; then
+    SEEN_PIDS[$pid]=1
+    pids+=("$pid")
+  fi
+}
+
+declare -A SEEN_PIDS=()
 pids=()
 pid_file=$(pidfile_path)
+stopped_any=0
 if [[ -f "$pid_file" ]]; then
+  echo "Using PID file: $pid_file"
   # shellcheck disable=SC1090
   source "$pid_file" || true
-  stop_pid "${RUN_SYNC_ALL_PID:-}"
-  stop_pid "${TMDB_PID:-}"
-  stop_pid "${TPDB_PID:-}"
+  if [[ -n "${RUN_SYNC_ALL_PID:-}" ]]; then
+    stop_pid "${RUN_SYNC_ALL_PID:-}"
+    stopped_any=1
+  fi
+  if [[ -n "${TMDB_PID:-}" ]]; then
+    stop_pid "${TMDB_PID:-}"
+    stopped_any=1
+  fi
+  if [[ -n "${TPDB_PID:-}" ]]; then
+    stop_pid "${TPDB_PID:-}"
+    stopped_any=1
+  fi
+  if [[ -n "${SYNC_PIDS:-}" ]]; then
+    for pid in ${SYNC_PIDS}; do
+      stop_pid "$pid"
+      stopped_any=1
+    done
+  fi
+  rm -f "$pid_file" 2>/dev/null || true
 fi
 while read -r pid; do
-  [[ -n "$pid" ]] && pids+=("$pid")
+  dedupe_add_pid "$pid"
 done < <(find_pids "cpu.services.tmdb_enrich")
 
 while read -r pid; do
-  [[ -n "$pid" ]] && pids+=("$pid")
+  dedupe_add_pid "$pid"
 done < <(find_pids "cpu.services.tpdb_enrich")
 
 while read -r pid; do
-  [[ -n "$pid" ]] && pids+=("$pid")
+  dedupe_add_pid "$pid"
 done < <(find_pids "cpu.services.sync_runner")
 
 if [[ ${#pids[@]} -eq 0 ]]; then
-  echo "No matching sync processes found for config: $CONFIG_PATH"
-  exit 0
+  if [[ $stopped_any -ne 0 ]]; then
+    echo "Stopped run_sync_all via PID file."
+    exit 0
+  else
+    echo "No matching sync processes found for config: $CONFIG_PATH"
+    exit 0
+  fi
 fi
 
 echo "Stopping processes: ${pids[*]}"

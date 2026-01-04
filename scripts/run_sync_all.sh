@@ -26,14 +26,19 @@ echo "Sync loop: ${SYNC_LOOP} sleep=${SYNC_LOOP_SLEEP}s"
 mkdir -p "$PID_DIR"
 
 PID_FILE="$(
-  python - "$CONFIG_PATH" <<'PY'
+  python - "$PID_DIR" "$CONFIG_PATH" <<'PY'
 import hashlib
+import os
 import sys
 
-path = sys.argv[1].encode("utf-8")
-print(f"data/pids/run_sync_all.{hashlib.sha1(path).hexdigest()}.pid")
+pid_dir = sys.argv[1]
+cfg_path = os.path.abspath(sys.argv[2])
+key = cfg_path.encode("utf-8")
+name = f"run_sync_all.{hashlib.sha1(key).hexdigest()}.pid"
+print(os.path.join(pid_dir, name))
 PY
 )"
+echo "PID file: $PID_FILE"
 
 get_dsn() {
   local path="$1"
@@ -120,11 +125,15 @@ ensure_bitmagnet_views
 write_pidfile() {
   : >"$PID_FILE"
   echo "RUN_SYNC_ALL_PID=$$" >>"$PID_FILE"
+  echo "CONFIG_PATH=$CONFIG_PATH" >>"$PID_FILE"
   if [[ -n "${TMDB_PID:-}" ]]; then
     echo "TMDB_PID=$TMDB_PID" >>"$PID_FILE"
   fi
   if [[ -n "${TPDB_PID:-}" ]]; then
     echo "TPDB_PID=$TPDB_PID" >>"$PID_FILE"
+  fi
+  if [[ ${#SYNC_PIDS[@]} -gt 0 ]]; then
+    echo "SYNC_PIDS=${SYNC_PIDS[*]}" >>"$PID_FILE"
   fi
 }
 
@@ -179,6 +188,7 @@ run_sync_once() {
     PYTHONPATH=src python -m cpu.services.sync_runner --config "$CONFIG_PATH" --source "$source" &
     SYNC_PIDS+=("$!")
   done
+  write_pidfile
   any_fail=0
   set +e
   for pid in "${SYNC_PIDS[@]}"; do
