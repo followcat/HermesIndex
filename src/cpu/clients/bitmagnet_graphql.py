@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any, Dict, List, Optional
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 
 class BitmagnetGraphQLClient:
@@ -24,7 +27,9 @@ class BitmagnetGraphQLClient:
                     )
                 if resp.status_code == 422:
                     # Some GraphQL servers return 422 for parse/validation errors.
-                    raise RuntimeError(f"HTTP 422 from Bitmagnet GraphQL: {resp.text}")
+                    body = (resp.text or "").strip()
+                    logger.warning("Bitmagnet GraphQL 422 body=%s", body[:2000])
+                    raise RuntimeError(f"HTTP 422 from Bitmagnet GraphQL: {body}")
                 if resp.status_code in {502, 503, 504}:
                     last_status = int(resp.status_code)
                     last_exc = RuntimeError(f"HTTP {resp.status_code} from Bitmagnet GraphQL")
@@ -42,32 +47,101 @@ class BitmagnetGraphQLClient:
         raise RuntimeError(f"Bitmagnet GraphQL request failed{suffix} error={last_exc}") from last_exc
 
     def search_torrents(self, query_string: str, limit: int = 50) -> Dict[str, Any]:
-        gql = """
-        query SearchTorrents($query: String!, $limit: Int!) {
-          torrents(query: { queryString: $query }, limit: $limit) {
-            totalCount
-            edges {
-              node {
-                infoHash
-                name
-                size
-                filesCount
-                seeders
-                leechers
-                publishedAt
-                content {
-                  type
-                  title
-                  releaseYear
-                  collections { name type }
-                  attributes { key value }
+        variants = [
+            (
+                "queryString",
+                """
+                query SearchTorrents($query: String!, $limit: Int!) {
+                  torrents(query: { queryString: $query }, limit: $limit) {
+                    totalCount
+                    edges {
+                      node {
+                        infoHash
+                        name
+                        size
+                        filesCount
+                        seeders
+                        leechers
+                        publishedAt
+                        content {
+                          type
+                          title
+                          releaseYear
+                          collections { name type }
+                          attributes { key value }
+                        }
+                      }
+                    }
+                  }
                 }
-              }
-            }
-          }
-        }
-        """
-        return self._post(gql, {"query": query_string, "limit": int(limit)})
+                """,
+            ),
+            (
+                "query",
+                """
+                query SearchTorrents($query: String!, $limit: Int!) {
+                  torrents(query: { query: $query }, limit: $limit) {
+                    totalCount
+                    edges {
+                      node {
+                        infoHash
+                        name
+                        size
+                        filesCount
+                        seeders
+                        leechers
+                        publishedAt
+                        content {
+                          type
+                          title
+                          releaseYear
+                          collections { name type }
+                          attributes { key value }
+                        }
+                      }
+                    }
+                  }
+                }
+                """,
+            ),
+            (
+                "text",
+                """
+                query SearchTorrents($query: String!, $limit: Int!) {
+                  torrents(query: { text: $query }, limit: $limit) {
+                    totalCount
+                    edges {
+                      node {
+                        infoHash
+                        name
+                        size
+                        filesCount
+                        seeders
+                        leechers
+                        publishedAt
+                        content {
+                          type
+                          title
+                          releaseYear
+                          collections { name type }
+                          attributes { key value }
+                        }
+                      }
+                    }
+                  }
+                }
+                """,
+            ),
+        ]
+        last_exc: Exception | None = None
+        for label, gql in variants:
+            try:
+                return self._post(gql, {"query": query_string, "limit": int(limit)})
+            except Exception as exc:
+                last_exc = exc
+                logger.warning("Bitmagnet GraphQL search variant=%s failed error=%s", label, exc)
+                continue
+        raise RuntimeError(f"Bitmagnet GraphQL search failed for all variants: {last_exc}") from last_exc
 
     @staticmethod
     def extract_torrent_nodes(payload: Dict[str, Any]) -> List[Dict[str, Any]]:

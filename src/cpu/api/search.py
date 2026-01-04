@@ -774,6 +774,11 @@ def search_keyword(
             payload = bitmagnet_graphql_client.search_torrents(cleaned_query, limit=gql_limit)
             nodes = bitmagnet_graphql_client.extract_torrent_nodes(payload)
         except Exception as exc:
+            logger.warning(
+                "Bitmagnet GraphQL keyword search failed endpoint=%s error=%s",
+                getattr(bitmagnet_graphql_client, "endpoint", ""),
+                exc,
+            )
             raise HTTPException(status_code=502, detail=f"Bitmagnet GraphQL search failed: {exc}") from exc
 
         candidates: List[SearchResult] = []
