@@ -9,6 +9,10 @@ local_embedder:
 search:
   # Optional query prefix for specific embedding models.
   # query_prefix: "Represent this sentence for searching relevant passages: "
+  # Keyword search backend:
+  # - "auto" (default): use bitmagnet GraphQL when configured, else fallback to Postgres keyword scan
+  # - "pg": force Postgres keyword scan (can be slow on huge tables)
+  keyword_backend: "auto"
 
 postgres:
   dsn: "postgresql://user:password@localhost:5432/hermes"

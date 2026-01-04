@@ -711,6 +711,39 @@ def _keyword_hit_score(query: str, title: str) -> float:
     return float(max(0.2, 0.9 / (1 + pos)))
 
 
+def _normalize_info_hash(value: str) -> str:
+    text = (value or "").strip()
+    if not text:
+        return ""
+    if text.startswith("\\x") and len(text) == 42:
+        return text.lower()
+    candidate = text.lower()
+    if len(candidate) == 40 and re.fullmatch(r"[0-9a-f]{40}", candidate):
+        return "\\x" + candidate
+    return text
+
+
+def _node_has_tmdb(node: Dict[str, Any]) -> bool:
+    content = node.get("content")
+    if not isinstance(content, dict):
+        return False
+    attrs = content.get("attributes") or []
+    if not isinstance(attrs, list):
+        return False
+    for item in attrs:
+        if not isinstance(item, dict):
+            continue
+        key = str(item.get("key") or "").lower()
+        val = str(item.get("value") or "").strip()
+        if not val:
+            continue
+        if "tmdb" in key:
+            return True
+        if key == "id" and re.fullmatch(r"tmdb:[a-z_]+:\\d+", val.lower()):
+            return True
+    return False
+
+
 @app.get("/search_keyword")
 def search_keyword(
     q: str = Query(..., description="keyword query text"),
@@ -731,6 +764,81 @@ def search_keyword(
     size_min_bytes = None
     if size_min_gb is not None:
         size_min_bytes = int(max(size_min_gb, 0) * (1024**3))
+
+    keyword_backend = str((cfg.search or {}).get("keyword_backend") or "auto").strip().lower()
+    if keyword_backend != "pg" and bitmagnet_graphql_client is not None:
+        per_source_limit = min(2000, max(cursor + page_size * 3, topk * 3))
+        try:
+            payload = bitmagnet_graphql_client.search_torrents(cleaned_query, limit=per_source_limit)
+            nodes = bitmagnet_graphql_client.extract_torrent_nodes(payload)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Bitmagnet GraphQL search failed: {exc}") from exc
+
+        candidates: List[SearchResult] = []
+        ids: List[str] = []
+        for node in nodes:
+            info_hash = _normalize_info_hash(str(node.get("infoHash") or ""))
+            if info_hash:
+                ids.append(info_hash)
+        sync_scores = pg_client.fetch_sync_scores("bitmagnet_torrents", ids)
+        for node in nodes:
+            info_hash = _normalize_info_hash(str(node.get("infoHash") or ""))
+            title = str(node.get("name") or "")
+            if not info_hash or not title:
+                continue
+            if size_min_bytes is not None:
+                try:
+                    if float(node.get("size") or 0) < float(size_min_bytes):
+                        continue
+                except (TypeError, ValueError):
+                    pass
+            if tmdb_only and not _node_has_tmdb(node):
+                continue
+            nsfw_score = float((sync_scores.get(info_hash) or {}).get("nsfw_score") or 0.0)
+            nsfw_flag = nsfw_score >= float(cfg.nsfw_threshold)
+            if exclude_nsfw and nsfw_flag:
+                continue
+            meta = {
+                "size": node.get("size"),
+                "files_count": node.get("filesCount"),
+                "seeders": node.get("seeders"),
+                "leechers": node.get("leechers"),
+                "published_at": node.get("publishedAt"),
+                "content": node.get("content"),
+            }
+            candidates.append(
+                SearchResult(
+                    score=_keyword_hit_score(cleaned_query, title),
+                    source="bitmagnet_torrents",
+                    pg_id=info_hash,
+                    title=title,
+                    nsfw=bool(nsfw_flag),
+                    nsfw_score=float(nsfw_score),
+                    metadata=_sanitize_value(meta) or {},
+                )
+            )
+        candidates.sort(key=lambda x: x.score, reverse=True)
+        deduped = _dedupe_search_results(candidates)
+        if size_sort_norm in {"asc", "desc"}:
+            reverse = size_sort_norm == "desc"
+
+            def sort_key(item: SearchResult) -> tuple[int, float, float]:
+                size_val = _meta_size(item.metadata)
+                missing = 1 if size_val is None else 0
+                if size_val is None:
+                    size_val = 0.0
+                size_key = -size_val if reverse else size_val
+                return (missing, size_key, -item.score)
+
+            deduped.sort(key=sort_key)
+        sliced = deduped[cursor : cursor + page_size]
+        next_cursor = cursor + page_size if len(deduped) > cursor + page_size else None
+        return {
+            "count": len(sliced),
+            "next_cursor": next_cursor,
+            "page_size": page_size,
+            "results": [e.model_dump() for e in sliced],
+        }
 
     if sources:
         selected_sources = [s.strip() for s in sources.split(",") if s.strip()]
@@ -767,62 +875,6 @@ def search_keyword(
                 "where": merged_where or pg_cfg.get("where"),
             },
         }
-
-        if (
-            bitmagnet_graphql_client is not None
-            and source_name == "bitmagnet_torrents"
-            and pg_cfg.get("id_field") == "info_hash"
-        ):
-            try:
-                payload = bitmagnet_graphql_client.search_torrents(cleaned_query, limit=per_source_limit)
-                nodes = bitmagnet_graphql_client.extract_torrent_nodes(payload)
-            except Exception as exc:
-                nodes = []
-                logger.warning("Bitmagnet GraphQL keyword search failed; falling back to PG error=%s", exc)
-            if nodes:
-                ids = [str(n.get("infoHash") or "") for n in nodes if n.get("infoHash")]
-                sync_scores = pg_client.fetch_sync_scores(source_name, ids)
-                for node in nodes:
-                    pg_id = str(node.get("infoHash") or "")
-                    title = str(node.get("name") or "")
-                    if not pg_id or not title:
-                        continue
-                    if size_min_bytes is not None:
-                        try:
-                            if float(node.get("size") or 0) < float(size_min_bytes):
-                                continue
-                        except (TypeError, ValueError):
-                            pass
-                    if tmdb_only and not node.get("content"):
-                        continue
-                    nsfw_score = float((sync_scores.get(pg_id) or {}).get("nsfw_score") or 0.0)
-                    nsfw_flag = (
-                        nsfw_score >= float(cfg.nsfw_threshold)
-                        if source_cfg.get("tagging", {}).get("nsfw", True)
-                        else False
-                    )
-                    if exclude_nsfw and nsfw_flag:
-                        continue
-                    meta = {
-                        "size": node.get("size"),
-                        "files_count": node.get("filesCount"),
-                        "seeders": node.get("seeders"),
-                        "leechers": node.get("leechers"),
-                        "published_at": node.get("publishedAt"),
-                        "content": node.get("content"),
-                    }
-                    candidates.append(
-                        SearchResult(
-                            score=_keyword_hit_score(cleaned_query, title),
-                            source=source_name,
-                            pg_id=pg_id,
-                            title=title,
-                            nsfw=bool(nsfw_flag),
-                            nsfw_score=float(nsfw_score),
-                            metadata=_sanitize_value(meta) or {},
-                        )
-                    )
-                continue
         keyword_hits = pg_client.search_by_keyword(rows_source_cfg, cleaned_query, limit=per_source_limit)
         if not keyword_hits:
             continue
