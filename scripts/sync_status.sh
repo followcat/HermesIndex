@@ -14,6 +14,7 @@ import sys
 try:
     import yaml
     import psycopg
+    from psycopg import sql
 except Exception as exc:  # pragma: no cover
     raise SystemExit(f"Missing dependency: {exc}")
 
@@ -88,11 +89,21 @@ with psycopg.connect(dsn, autocommit=True) as conn:
             )
             status_rows = cur.fetchall()
             status_map = {row[0]: row[1] for row in status_rows}
+            cur.execute(
+                f"""
+                SELECT content_type, content_source, content_id, tpdb_id, title, status, updated_at
+                FROM {schema}.tpdb_enrichment
+                ORDER BY updated_at DESC NULLS LAST
+                LIMIT 1
+                """
+            )
+            tpdb_latest = cur.fetchone()
             print("TPDB enrichment:")
             print(f"  Table: {schema}.tpdb_enrichment")
             print(f"  Total rows: {tpdb_total}")
             print(f"  Max updated_at: {tpdb_max_updated}")
             print(f"  Status counts: {status_map}")
+            print(f"  Latest row: {tpdb_latest}")
         else:
             print("TPDB enrichment: not found")
         for source in sources:
@@ -100,14 +111,13 @@ with psycopg.connect(dsn, autocommit=True) as conn:
             pg_cfg = source.get("pg", {})
             table = pg_cfg.get("table")
             id_field = pg_cfg.get("id_field")
+            text_field = pg_cfg.get("text_field")
             updated_at_field = pg_cfg.get("updated_at_field")
             print(f"Source: {name}")
             if not table or not id_field:
                 print("  Missing table/id_field")
                 continue
-            cur.execute(
-                f"SELECT count(*) FROM {table}",
-            )
+            cur.execute(sql.SQL("SELECT count(*) FROM {}").format(sql.SQL(table)))
             total = cur.fetchone()[0]
             cur.execute(
                 f"SELECT count(*) FROM {schema}.sync_state WHERE source = %s",
@@ -119,7 +129,10 @@ with psycopg.connect(dsn, autocommit=True) as conn:
             print(f"  Synced rows: {synced}")
             if updated_at_field:
                 cur.execute(
-                    f"SELECT max({updated_at_field}) FROM {table}",
+                    sql.SQL("SELECT max({}) FROM {}").format(
+                        sql.Identifier(updated_at_field),
+                        sql.SQL(table),
+                    )
                 )
                 max_src = cur.fetchone()[0]
                 cur.execute(
@@ -128,18 +141,91 @@ with psycopg.connect(dsn, autocommit=True) as conn:
                 )
                 max_sync = cur.fetchone()[0]
                 cur.execute(
-                    f"""
-                    SELECT max(t.{updated_at_field})
-                    FROM {table} t
-                    JOIN {schema}.sync_state s
-                      ON s.source = %s AND s.pg_id = t.{id_field}::text
-                    """,
+                    sql.SQL(
+                        """
+                        SELECT max(t.{updated_at})
+                        FROM {table} t
+                        JOIN {schema}.sync_state s
+                          ON s.source = %s AND s.pg_id = t.{id_field}::text
+                        """
+                    ).format(
+                        updated_at=sql.Identifier(updated_at_field),
+                        table=sql.SQL(table),
+                        schema=sql.Identifier(schema),
+                        id_field=sql.Identifier(id_field),
+                    ),
                     (name,),
                 )
                 max_synced_src = cur.fetchone()[0]
                 print(f"  Max {updated_at_field}: {max_src}")
                 print(f"  Last sync updated_at: {max_sync}")
                 print(f"  Max synced {updated_at_field}: {max_synced_src}")
+            cur.execute(
+                f"SELECT max(updated_at) FROM {schema}.sync_state WHERE source = %s",
+                (name,),
+            )
+            latest_sync = cur.fetchone()[0]
+            latest_item = None
+            if latest_sync:
+                select_fields = [sql.SQL("t.{id_field}::text").format(id_field=sql.Identifier(id_field))]
+                if text_field:
+                    select_fields.append(sql.SQL("t.{text_field}").format(text_field=sql.Identifier(text_field)))
+                cur.execute(
+                    sql.SQL(
+                        """
+                        SELECT {fields}
+                        FROM {table} t
+                        JOIN {schema}.sync_state s
+                          ON s.source = %s AND s.pg_id = t.{id_field}::text
+                        ORDER BY s.updated_at DESC NULLS LAST
+                        LIMIT 1
+                        """
+                    ).format(
+                        fields=sql.SQL(", ").join(select_fields),
+                        table=sql.SQL(table),
+                        schema=sql.Identifier(schema),
+                        id_field=sql.Identifier(id_field),
+                    ),
+                    (name,),
+                )
+                latest_item = cur.fetchone()
+            print(f"  Latest sync updated_at: {latest_sync}")
+            print(f"  Latest synced item: {latest_item}")
+            if pg_cfg.get("tpdb_enrich"):
+                tpdb_content_type = pg_cfg.get("tpdb_content_type") or name
+                tpdb_content_source = pg_cfg.get("tpdb_content_source") or name
+                cur.execute(
+                    f"""
+                    SELECT count(*)
+                    FROM {schema}.tpdb_enrichment
+                    WHERE content_type = %s AND content_source = %s
+                    """,
+                    (tpdb_content_type, tpdb_content_source),
+                )
+                tpdb_count = cur.fetchone()[0]
+                cur.execute(
+                    f"""
+                    SELECT max(updated_at)
+                    FROM {schema}.tpdb_enrichment
+                    WHERE content_type = %s AND content_source = %s
+                    """,
+                    (tpdb_content_type, tpdb_content_source),
+                )
+                tpdb_latest_at = cur.fetchone()[0]
+                cur.execute(
+                    f"""
+                    SELECT content_id, title, status, updated_at
+                    FROM {schema}.tpdb_enrichment
+                    WHERE content_type = %s AND content_source = %s
+                    ORDER BY updated_at DESC NULLS LAST
+                    LIMIT 1
+                    """,
+                    (tpdb_content_type, tpdb_content_source),
+                )
+                tpdb_latest_item = cur.fetchone()
+                print(f"  TPDB rows: {tpdb_count}")
+                print(f"  TPDB latest updated_at: {tpdb_latest_at}")
+                print(f"  TPDB latest item: {tpdb_latest_item}")
             cur.execute(
                 f"SELECT count(*) FROM {schema}.sync_state WHERE source = %s AND last_error IS NOT NULL",
                 (name,),
