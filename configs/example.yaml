@@ -24,6 +24,10 @@ bitmagnet:
   password: "REPLACE_PASSWORD"
   schema: "hermes"
   create_schema: true
+  # Optional: Bitmagnet GraphQL endpoint for fast keyword search on torrents.
+  # Usually served by bitmagnet at :3333/graphql.
+  graphql_endpoint: "http://127.0.0.1:3333/graphql"
+  graphql_timeout_seconds: 15
 
 # TMDB enrichment (optional, uses API key from env)
 tmdb:
