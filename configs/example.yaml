@@ -165,6 +165,11 @@ sources:
       updated_at_field: "updated_at"   # optional
       extra_fields: ["category", "size"]
       size_field: "size"
+      tpdb_enrich: true
+      tpdb_type: "jav"
+      tpdb_content_type: "torrent"
+      tpdb_content_source: "torrents"
+      where: "t.title ~* '(?<![A-Z0-9])[A-Z]{2,6}[-_ ]?[0-9]{2,5}(?![A-Z0-9])'"
     vector_index:
       index_name: "torrents_title_v1"
       dim: 768
@@ -180,6 +185,11 @@ sources:
       table: "files"
       id_field: "id"
       text_field: "name"
+      tpdb_enrich: true
+      tpdb_type: "jav"
+      tpdb_content_type: "file"
+      tpdb_content_source: "files"
+      where: "t.name ~* '(?<![A-Z0-9])[A-Z]{2,6}[-_ ]?[0-9]{2,5}(?![A-Z0-9])'"
     vector_index:
       index_name: "files_name_v1"
       dim: 768
