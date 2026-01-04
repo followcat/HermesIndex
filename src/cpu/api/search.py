@@ -3,11 +3,12 @@ import re
 import threading
 import time
 from datetime import datetime
+from ipaddress import ip_address
 from typing import Any, Dict, List
 
 import numpy as np
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Header, Query
+from fastapi import Depends, FastAPI, HTTPException, Header, Query, Request
 from pydantic import BaseModel
 
 from cpu.config import load_config
@@ -210,6 +211,29 @@ def require_admin(user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any
     return user
 
 
+def _is_loopback(value: str | None) -> bool:
+    if not value:
+        return False
+    try:
+        return ip_address(value).is_loopback
+    except ValueError:
+        return False
+
+
+def require_local(request: Request) -> None:
+    client_host = getattr(request.client, "host", None) if request.client else None
+    if not _is_loopback(client_host):
+        raise HTTPException(status_code=403, detail="Local access only")
+    forwarded = request.headers.get("x-forwarded-for") or ""
+    real_ip = request.headers.get("x-real-ip") or ""
+    if forwarded:
+        first = forwarded.split(",")[0].strip()
+        if first and not _is_loopback(first):
+            raise HTTPException(status_code=403, detail="Local access only")
+    if real_ip and not _is_loopback(real_ip.strip()):
+        raise HTTPException(status_code=403, detail="Local access only")
+
+
 def _sanitize_config(obj: Any) -> Any:
     if isinstance(obj, dict):
         out: Dict[str, Any] = {}
@@ -225,7 +249,8 @@ def _sanitize_config(obj: Any) -> Any:
 
 
 @app.get("/debug/config")
-def debug_config(_: Dict[str, Any] | None = Depends(require_admin)) -> Dict[str, Any]:
+def debug_config(request: Request) -> Dict[str, Any]:
+    require_local(request)
     vector_cfg = _sanitize_config(cfg.vector_store or {})
     sources = [s.get("name") for s in (cfg.sources or []) if s.get("name")]
     try:
