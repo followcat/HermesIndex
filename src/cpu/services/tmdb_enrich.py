@@ -49,7 +49,7 @@ def fetch_tmdb_refs(
             SELECT c.type AS content_type, c.id AS tmdb_id
             FROM public.content c
             WHERE c.source = 'tmdb'
-            ORDER BY c.id
+            ORDER BY c.id::bigint
             LIMIT %s
             """
         )
@@ -62,7 +62,7 @@ def fetch_tmdb_refs(
                 ON te.content_type = c.type AND te.tmdb_id = c.id
             WHERE c.source = 'tmdb'
               AND te.tmdb_id IS NULL
-            ORDER BY c.id
+            ORDER BY c.id::bigint
             LIMIT %s
             """
         ).format(schema=sql.Identifier(schema))

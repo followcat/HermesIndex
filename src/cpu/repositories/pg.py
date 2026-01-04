@@ -58,6 +58,7 @@ class PGClient:
             conditions = [
                 "s.pg_id IS NULL",
                 f"t.{updated_at_field} > COALESCE(s.updated_at, to_timestamp(0))",
+                f"s.text_hash IS DISTINCT FROM md5(t.{text_field})",
             ]
         else:
             conditions = ["s.pg_id IS NULL", f"s.text_hash IS DISTINCT FROM md5(t.{text_field})"]
