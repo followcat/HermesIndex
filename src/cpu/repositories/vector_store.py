@@ -1,6 +1,7 @@
 import json
 import os
 import threading
+import time
 import uuid
 from typing import Any, Dict, List
 
@@ -173,22 +174,83 @@ class QdrantVectorStore(BaseVectorStore):
         self.url = url
         distance = Distance.COSINE if metric == "cosine" else Distance.DOT
         self.client = QdrantClient(url=url, api_key=api_key, timeout=60)
-        if collection not in [c.name for c in self.client.get_collections().collections]:
-            self.client.recreate_collection(
-                collection_name=collection,
-                vectors_config=VectorParams(size=dim, distance=distance),
-            )
+        self._api_key = api_key
+        self._http_timeout = 30
+        self._distance_name = "Cosine" if metric == "cosine" else "Dot"
+        vectors_config = VectorParams(size=dim, distance=distance)
+        init_error: Exception | None = None
+        for _ in range(3):
+            try:
+                collections = self.client.get_collections().collections
+                if collection not in [c.name for c in collections]:
+                    self.client.recreate_collection(
+                        collection_name=collection,
+                        vectors_config=vectors_config,
+                    )
+                init_error = None
+                break
+            except Exception as exc:  # transient (e.g. 502) or gateway issues
+                init_error = exc
+                time.sleep(0.5)
+        if init_error is not None:
+            # Fall back to raw HTTP mode (still supports query/add), so sync_runner won't crash.
+            self.client = None
+            self._ensure_collection_http()
+
+    def _http_headers(self) -> Dict[str, str]:
+        headers: Dict[str, str] = {}
+        if self._api_key:
+            headers["api-key"] = str(self._api_key)
+        return headers
+
+    def _http_request(self, method: str, path: str, json_body: Dict[str, Any] | None = None) -> Dict[str, Any]:
+        import httpx
+
+        base_url = self.url.rstrip("/")
+        url = f"{base_url}{path}"
+        last_exc: Exception | None = None
+        for attempt in range(3):
+            try:
+                resp = httpx.request(
+                    method,
+                    url,
+                    json=json_body,
+                    headers=self._http_headers(),
+                    timeout=self._http_timeout,
+                )
+                if resp.status_code in {502, 503, 504}:
+                    time.sleep(0.3 * (attempt + 1))
+                    continue
+                resp.raise_for_status()
+                return resp.json() if resp.content else {}
+            except Exception as exc:
+                last_exc = exc
+                time.sleep(0.3 * (attempt + 1))
+        raise RuntimeError(f"Qdrant HTTP request failed: {method} {path} error={last_exc}") from last_exc
+
+    def _ensure_collection_http(self) -> None:
+        info = self._http_request("GET", f"/collections/{self.collection}")
+        if info.get("result") and info.get("status") == "ok":
+            return
+        payload = {"vectors": {"size": int(self.dim), "distance": self._distance_name}}
+        self._http_request("PUT", f"/collections/{self.collection}", json_body=payload)
 
     def add(self, embeddings: np.ndarray, metas: List[Dict[str, Any]]) -> List[str]:
-        from qdrant_client.http.models import PointStruct
-
-        points: List[PointStruct] = []
-        for idx, (emb, meta) in enumerate(zip(embeddings, metas)):
+        points: List[Dict[str, Any]] = []
+        point_ids: List[str] = []
+        for emb, meta in zip(embeddings, metas):
             raw_id = f"{meta['source']}:{meta['pg_id']}"
             point_id = str(uuid.uuid5(uuid.NAMESPACE_URL, raw_id))
-            points.append(PointStruct(id=point_id, vector=emb.tolist(), payload=meta))
-        self.client.upsert(collection_name=self.collection, points=points, wait=True)
-        return [str(p.id) for p in points]
+            point_ids.append(point_id)
+            points.append({"id": point_id, "vector": emb.tolist(), "payload": meta})
+        if self.client is not None:
+            from qdrant_client.http.models import PointStruct
+
+            structs = [PointStruct(id=p["id"], vector=p["vector"], payload=p["payload"]) for p in points]
+            self.client.upsert(collection_name=self.collection, points=structs, wait=True)
+            return point_ids
+        self._http_request("PUT", f"/collections/{self.collection}/points?wait=true", json_body={"points": points})
+        return point_ids
 
     def query(
         self,
@@ -332,8 +394,12 @@ class QdrantVectorStore(BaseVectorStore):
         return results
 
     def size(self) -> int:
-        info = self.client.get_collection(collection_name=self.collection)
-        return int(info.points_count or 0)
+        if self.client is not None:
+            info = self.client.get_collection(collection_name=self.collection)
+            return int(info.points_count or 0)
+        data = self._http_request("GET", f"/collections/{self.collection}")
+        result = data.get("result") or {}
+        return int((result.get("points_count") or 0))
 
 
 class MilvusVectorStore(BaseVectorStore):
