@@ -271,20 +271,34 @@ class PGClient:
         where_extra = pg_cfg.get("where")
         if not query:
             return []
-        clauses = " OR ".join([f"{f} ILIKE %s" for f in fields])
-        where_sql = f"({clauses})"
+        ident = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+        safe_fields = [f for f in fields if ident.fullmatch(str(f or ""))]
+        if not safe_fields:
+            safe_fields = [text_field]
+        clause_sql = sql.SQL(" OR ").join(
+            [sql.SQL("{} ILIKE %s").format(sql.Identifier("t", f)) for f in safe_fields]
+        )
+        where_sql: sql.Composable = sql.SQL("({})").format(clause_sql)
         if where_extra:
-            where_sql = f"{where_sql} AND ({where_extra})"
-        sql_text = f"""
-        SELECT DISTINCT ON ({text_field}) {id_field}::text AS pg_id, {text_field} AS title
-        FROM {table}
-        WHERE {where_sql}
-        ORDER BY {text_field}, {id_field}
-        LIMIT %s
-        """
-        params = [f"%{query}%"] * len(fields) + [limit]
+            where_sql = sql.SQL("{} AND ({})").format(where_sql, sql.SQL(str(where_extra)))
+
+        statement = sql.SQL(
+            """
+            SELECT DISTINCT ON ({text}) {id}::text AS pg_id, {text} AS title
+            FROM {table} AS t
+            WHERE {where}
+            ORDER BY {text}, {id}
+            LIMIT %s
+            """
+        ).format(
+            text=sql.Identifier("t", text_field),
+            id=sql.Identifier("t", id_field),
+            table=self._table_identifier(table),
+            where=where_sql,
+        )
+        params = [f"%{query}%"] * len(safe_fields) + [limit]
         with self.connect() as conn, conn.cursor() as cur:
-            cur.execute(sql_text, params)
+            cur.execute(statement, params)
             return cur.fetchall()
 
     def fetch_torrent_files(self, schema: str, info_hash_text: str, limit: int = 2000) -> List[Dict[str, Any]]:
