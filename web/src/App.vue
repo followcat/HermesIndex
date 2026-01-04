@@ -42,6 +42,14 @@
         </form>
         <div class="filters">
           <label class="chip">
+            <input v-model="searchMode" type="radio" value="semantic" />
+            语义
+          </label>
+          <label class="chip">
+            <input v-model="searchMode" type="radio" value="keyword" />
+            关键词
+          </label>
+          <label class="chip">
             <input v-model="excludeNsfw" type="checkbox" />
             排除 NSFW
           </label>
@@ -505,6 +513,7 @@ const authLoading = ref(false);
 const authError = ref("");
 const loginForm = ref({ username: "", password: "" });
 const query = ref("");
+const searchMode = ref("semantic");
 const pageSize = ref(20);
 const cursor = ref(0);
 const nextCursor = ref(null);
@@ -864,6 +873,7 @@ function saveSearchState() {
   if (typeof localStorage === "undefined") return;
   const state = {
     query: query.value,
+    searchMode: searchMode.value,
     results: results.value,
     cursor: cursor.value,
     nextCursor: nextCursor.value,
@@ -889,6 +899,7 @@ function restoreSearchState() {
     if (!raw) return;
     const state = JSON.parse(raw);
     if (typeof state.query === "string") query.value = state.query;
+    if (typeof state.searchMode === "string") searchMode.value = state.searchMode;
     if (Array.isArray(state.results)) results.value = state.results;
     if (Array.isArray(state.cursorStack)) cursorStack.value = state.cursorStack;
     if (typeof state.cursor === "number") cursor.value = state.cursor;
@@ -1130,7 +1141,8 @@ async function runSearch(resetPage = false) {
     if (sizeSort.value) {
       params.set("size_sort", sizeSort.value);
     }
-    const resp = await apiFetch(`${apiBase}/search?${params.toString()}`);
+    const endpoint = searchMode.value === "keyword" ? "search_keyword" : "search";
+    const resp = await apiFetch(`${apiBase}/${endpoint}?${params.toString()}`);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
     results.value = data.results || [];
@@ -1431,6 +1443,7 @@ onUnmounted(() => {
 watch(
   [
     query,
+    searchMode,
     results,
     cursor,
     nextCursor,
