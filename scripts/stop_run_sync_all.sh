@@ -2,6 +2,7 @@
 set -euo pipefail
 
 CONFIG_PATH=${CONFIG_PATH:-configs/bitmagnet.yaml}
+PID_DIR=${PID_DIR:-data/pids}
 
 if [[ ! -f "$CONFIG_PATH" ]]; then
   echo "Config not found: $CONFIG_PATH" >&2
@@ -19,7 +20,35 @@ find_pids() {
   pgrep -f "python.*-m[[:space:]]+$module.*--config[[:space:]]+$cfg_regex" || true
 }
 
+pidfile_path() {
+  python - "$CONFIG_PATH" <<'PY'
+import hashlib
+import sys
+
+path = sys.argv[1].encode("utf-8")
+print(f"data/pids/run_sync_all.{hashlib.sha1(path).hexdigest()}.pid")
+PY
+}
+
+stop_pid() {
+  local pid=$1
+  if [[ -z "$pid" ]]; then
+    return
+  fi
+  if kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null || true
+  fi
+}
+
 pids=()
+pid_file=$(pidfile_path)
+if [[ -f "$pid_file" ]]; then
+  # shellcheck disable=SC1090
+  source "$pid_file" || true
+  stop_pid "${RUN_SYNC_ALL_PID:-}"
+  stop_pid "${TMDB_PID:-}"
+  stop_pid "${TPDB_PID:-}"
+fi
 while read -r pid; do
   [[ -n "$pid" ]] && pids+=("$pid")
 done < <(find_pids "cpu.services.tmdb_enrich")

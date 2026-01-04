@@ -10,6 +10,7 @@ SYNC_TARGET=${SYNC_TARGET:-}
 SYNC_SOURCES=${SYNC_SOURCES:-bitmagnet_torrents,bitmagnet_torrent_files,bitmagnet_content_tpdb_jav,bitmagnet_content_tpdb_movie}
 SYNC_LOOP=${SYNC_LOOP:-true}
 SYNC_LOOP_SLEEP=${SYNC_LOOP_SLEEP:-300}
+PID_DIR=${PID_DIR:-data/pids}
 
 if [[ ! -f "$CONFIG_PATH" ]]; then
   echo "Config not found: $CONFIG_PATH" >&2
@@ -22,6 +23,17 @@ echo "TPDB enrich: enabled=$TPDB_ENABLE limit=$TPDB_LIMIT"
 echo "Sync target: ${SYNC_TARGET:-all}"
 echo "Sync sources: ${SYNC_SOURCES}"
 echo "Sync loop: ${SYNC_LOOP} sleep=${SYNC_LOOP_SLEEP}s"
+mkdir -p "$PID_DIR"
+
+PID_FILE="$(
+  python - "$CONFIG_PATH" <<'PY'
+import hashlib
+import sys
+
+path = sys.argv[1].encode("utf-8")
+print(f"data/pids/run_sync_all.{hashlib.sha1(path).hexdigest()}.pid")
+PY
+)"
 
 get_dsn() {
   local path="$1"
@@ -105,15 +117,36 @@ ensure_bitmagnet_views() {
 }
 ensure_bitmagnet_views
 
+write_pidfile() {
+  : >"$PID_FILE"
+  echo "RUN_SYNC_ALL_PID=$$" >>"$PID_FILE"
+  if [[ -n "${TMDB_PID:-}" ]]; then
+    echo "TMDB_PID=$TMDB_PID" >>"$PID_FILE"
+  fi
+  if [[ -n "${TPDB_PID:-}" ]]; then
+    echo "TPDB_PID=$TPDB_PID" >>"$PID_FILE"
+  fi
+}
+
+SYNC_PIDS=()
+
 cleanup() {
+  rm -f "$PID_FILE" 2>/dev/null || true
   if [[ -n "${TMDB_PID:-}" ]] && kill -0 "$TMDB_PID" 2>/dev/null; then
     kill "$TMDB_PID" 2>/dev/null || true
   fi
   if [[ -n "${TPDB_PID:-}" ]] && kill -0 "$TPDB_PID" 2>/dev/null; then
     kill "$TPDB_PID" 2>/dev/null || true
   fi
+  if [[ ${#SYNC_PIDS[@]} -gt 0 ]]; then
+    for pid in "${SYNC_PIDS[@]}"; do
+      if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+        kill "$pid" 2>/dev/null || true
+      fi
+    done
+  fi
 }
-trap cleanup EXIT
+trap cleanup EXIT INT TERM
 
 if [[ "$TMDB_ENABLE" == "true" ]]; then
   PYTHONPATH=src python -m cpu.services.tmdb_enrich --config "$CONFIG_PATH" --limit "$TMDB_LIMIT" --loop &
@@ -123,8 +156,10 @@ if [[ "$TPDB_ENABLE" == "true" ]]; then
   PYTHONPATH=src python -m cpu.services.tpdb_enrich --config "$CONFIG_PATH" --limit "$TPDB_LIMIT" --loop &
   TPDB_PID=$!
 fi
+write_pidfile
 
 run_sync_once() {
+  SYNC_PIDS=()
   if [[ -n "$SYNC_TARGET" ]]; then
     PYTHONPATH=src python -m cpu.services.sync_runner --config "$CONFIG_PATH" --source "$SYNC_TARGET"
     return
@@ -136,6 +171,7 @@ run_sync_once() {
       continue
     fi
     PYTHONPATH=src python -m cpu.services.sync_runner --config "$CONFIG_PATH" --source "$source" &
+    SYNC_PIDS+=("$!")
   done
   wait
 }
