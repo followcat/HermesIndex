@@ -1149,6 +1149,9 @@ async function runSearch(resetPage = false) {
       params.set("size_sort", sizeSort.value);
     }
     const endpoint = searchMode.value === "keyword" ? "search_keyword" : "search";
+    if (endpoint === "search") {
+      params.set("lite", "true");
+    }
     const resp = await apiFetch(`${apiBase}/${endpoint}?${params.toString()}`);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
@@ -1297,6 +1300,7 @@ async function fetchLatestMagnet(item) {
       exclude_nsfw: String(excludeNsfw.value),
       tmdb_only: "false",
       page_size: "10",
+      lite: "true",
       cursor: "0",
     });
     const resp = await apiFetch(`${apiBase}/search?${params.toString()}`);
