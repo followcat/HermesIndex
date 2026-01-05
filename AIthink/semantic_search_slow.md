@@ -13,7 +13,7 @@ Backend supports `debug=true` and now reports a timing breakdown in `_debug.timi
 Per-source Postgres lookup time is already available in `_debug.pg_sources[*].pg_fetch_ms`.
 
 ## How to reproduce
-Run:
+Run (if your deployment exposes the API under `/api`, use `http://HOST:PORT/api/search`):
 ```bash
 curl -sG 'http://127.0.0.1:8000/search' \
   --data-urlencode 'q=jojo奇妙冒险' \
