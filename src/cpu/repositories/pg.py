@@ -151,7 +151,14 @@ class PGClient:
             fields.append(f)
         joins = pg_cfg.get("joins", [])
         id_list = list(ids)
-        placeholders = sql.SQL(", ").join(sql.Placeholder() for _ in id_list)
+
+        # Optimize for bitmagnet info_hash (bytea) ids which are typically rendered as "\\x" + 40 hex chars.
+        bytea_pat = re.compile(r"^\\x[0-9a-fA-F]{40}$")
+        is_bytea_hex = bool(id_list) and all(isinstance(x, str) and bytea_pat.fullmatch(x) for x in id_list)
+        if is_bytea_hex:
+            placeholders = sql.SQL(", ").join(sql.SQL("%s::bytea") for _ in id_list)
+        else:
+            placeholders = sql.SQL(", ").join(sql.Placeholder() for _ in id_list)
         select_cols = []
         group_by_cols = []
         for f in fields:
@@ -232,7 +239,7 @@ class PGClient:
         where_extra = pg_cfg.get("where")
         base_sql = (
             "SELECT {selects} FROM {table} AS t {joins} "
-            "WHERE t.{id_field}::text IN ({placeholders})"
+            "WHERE t.{id_field} IN ({placeholders})"
         )
         if where_extra:
             base_sql += " AND ({where})"

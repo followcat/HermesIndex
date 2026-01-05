@@ -558,6 +558,8 @@ def search(
     size_sort: str | None = Query(None, description="size sort: asc/desc"),
     page_size: int = Query(20, ge=1, le=100),
     cursor: int = Query(0, ge=0, description="cursor offset for pagination"),
+    lite: bool = Query(False, description="skip heavy Postgres joins for faster semantic search"),
+    debug: bool = Query(False, description="include internal counters for troubleshooting"),
     _: Dict[str, Any] | None = Depends(require_user),
 ) -> Dict[str, Any]:
     cleaned_query, filters = extract_query_filters(q)
@@ -611,6 +613,7 @@ def search(
     filtered = [r for r in filtered if not (exclude_nsfw and r.get("nsfw"))]
     next_cursor = cursor + raw_count if raw_count == fetch_k else None
     ids_by_source: Dict[str, List[str]] = {}
+    debug_sources: List[Dict[str, Any]] = []
     for r in filtered:
         source = r.get("source")
         pg_id = r.get("pg_id")
@@ -625,27 +628,61 @@ def search(
         pg_cfg = source_cfg.get("pg", {})
         tmdb_field = pg_cfg.get("tmdb_only_field", "tmdb_id")
         fields = set([pg_cfg.get("id_field"), pg_cfg.get("text_field")] + pg_cfg.get("extra_fields", []))
-        where_clauses: List[str] = []
-        base_where = pg_cfg.get("where")
-        if base_where:
-            where_clauses.append(str(base_where))
+
+        # Vector hits must be resolvable by id; do NOT apply pg.where (often used as sync/scan scope like JAV regex).
+        lookup_where: List[str] = []
         if tmdb_only and tmdb_field in fields:
-            where_clauses.append(f"{tmdb_field} IS NOT NULL")
+            lookup_where.append(f"{tmdb_field} IS NOT NULL")
         size_field = _safe_identifier(pg_cfg.get("size_field", "size"))
         if size_min_bytes and size_field and size_field in fields:
-            where_clauses.append(f"t.{size_field} >= {size_min_bytes}")
-        merged_where = _merge_where(where_clauses)
+            lookup_where.append(f"t.{size_field} >= {size_min_bytes}")
+        merged_lookup_where = _merge_where(lookup_where)
+
         rows_source_cfg = {
             **source_cfg,
             "pg": {
                 **pg_cfg,
-                "where": merged_where or pg_cfg.get("where"),
+                "where": merged_lookup_where or None,
+                "joins": [] if lite else (pg_cfg.get("joins") or []),
             },
         }
+        fetch_start = time.perf_counter()
         rows = pg_client.fetch_by_ids(rows_source_cfg, ids)
+        fetch_ms = (time.perf_counter() - fetch_start) * 1000.0
+        if debug:
+            debug_sources.append(
+                {
+                    "source": source_name,
+                    "ids": len(ids),
+                    "rows": len(rows),
+                    "table": (pg_cfg.get("table") or ""),
+                    "joins": len(pg_cfg.get("joins") or []),
+                    "lite": bool(lite),
+                    "pg_fetch_ms": round(fetch_ms, 2),
+                    "where": bool(pg_cfg.get("where")),
+                }
+            )
         if pg_cfg.get("keyword_search") and cleaned_query:
+            # Keyword scan should respect pg.where (if configured), plus runtime filters.
+            keyword_where: List[str] = []
+            base_where = pg_cfg.get("where")
+            if base_where:
+                keyword_where.append(str(base_where))
+            if tmdb_only and tmdb_field in fields:
+                keyword_where.append(f"{tmdb_field} IS NOT NULL")
+            if size_min_bytes and size_field and size_field in fields:
+                keyword_where.append(f"t.{size_field} >= {size_min_bytes}")
+            merged_keyword_where = _merge_where(keyword_where)
+            keyword_source_cfg = {
+                **source_cfg,
+                "pg": {
+                    **pg_cfg,
+                    "where": merged_keyword_where or pg_cfg.get("where"),
+                    "joins": [],
+                },
+            }
             if not tmdb_only or tmdb_field in fields:
-                keyword_hits = pg_client.search_by_keyword(rows_source_cfg, cleaned_query, limit=page_size * 3)
+                keyword_hits = pg_client.search_by_keyword(keyword_source_cfg, cleaned_query, limit=page_size * 3)
             else:
                 keyword_hits = []
             for hit in keyword_hits:
@@ -690,12 +727,33 @@ def search(
             return (missing, size_key, -item.score)
 
         deduped.sort(key=sort_key)
-    return {
+    response: Dict[str, Any] = {
         "count": len(deduped),
         "next_cursor": next_cursor,
         "page_size": page_size,
         "results": [e.model_dump() for e in deduped],
     }
+    if debug:
+        try:
+            vs_size = vector_store.size()
+        except Exception as exc:
+            vs_size = f"error: {exc}"
+        response["_debug"] = {
+            "config_path": CONFIG_PATH,
+            "cleaned_query": cleaned_query,
+            "final_query": final_query,
+            "topk": topk,
+            "fetch_k": fetch_k,
+            "cursor": cursor,
+            "raw_vector_hits": raw_count,
+            "filtered_vector_hits": len(filtered),
+            "ids_by_source": {k: len(v) for k, v in ids_by_source.items()},
+            "pg_sources": debug_sources,
+            "enriched": len(enriched),
+            "deduped": len(deduped),
+            "vector_store_size": vs_size,
+        }
+    return response
 
 
 def _keyword_hit_score(query: str, title: str) -> float:
