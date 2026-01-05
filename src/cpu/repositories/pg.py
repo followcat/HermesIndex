@@ -152,6 +152,57 @@ class PGClient:
         joins = pg_cfg.get("joins", [])
         id_list = list(ids)
 
+        # Fast-path for bitmagnet torrent_files_view where id is "{info_hash_hex}:{index}".
+        if (
+            not joins
+            and str(id_field) == "file_id"
+            and isinstance(table, str)
+            and "torrent_files_view" in table
+        ):
+            file_id_pat = re.compile(r"^(?:\\x)?([0-9a-fA-F]{40}):(\d+)$")
+            parsed: List[tuple[str, int]] = []
+            for raw in id_list:
+                m = file_id_pat.fullmatch(str(raw))
+                if not m:
+                    parsed = []
+                    break
+                parsed.append((f"\\x{m.group(1)}", int(m.group(2))))
+            if parsed:
+                pair_placeholders = sql.SQL(", ").join(sql.SQL("(%s::bytea, %s)") for _ in parsed)
+                select_cols: List[sql.Composable] = []
+                for f in fields:
+                    if f == id_field:
+                        select_cols.append(
+                            sql.SQL("(encode(t.info_hash, 'hex') || ':' || t.index::text) AS {alias}").format(
+                                alias=sql.Identifier(f)
+                            )
+                        )
+                    else:
+                        select_cols.append(sql.SQL("t.{}").format(sql.Identifier(f)))
+                where_extra = pg_cfg.get("where")
+                base_sql = (
+                    "SELECT {selects} FROM public.torrent_files AS t "
+                    "WHERE (t.info_hash, t.index) IN ({pairs})"
+                )
+                if where_extra:
+                    base_sql += " AND ({where})"
+                query = sql.SQL(base_sql).format(
+                    selects=sql.SQL(", ").join(select_cols),
+                    pairs=pair_placeholders,
+                    where=sql.SQL(str(where_extra)) if where_extra else sql.SQL("TRUE"),
+                )
+                params: List[Any] = []
+                for h, idx in parsed:
+                    params.extend([h, idx])
+                with self.connect() as conn, conn.cursor() as cur:
+                    cur.execute(query, params)
+                    rows = cur.fetchall()
+                    result = {}
+                    for row in rows:
+                        key = str(row[id_field])
+                        result[key] = {k: row[k] for k in row}
+                    return result
+
         # Optimize for bitmagnet info_hash (bytea) ids which are typically rendered as "\\x" + 40 hex chars.
         bytea_pat = re.compile(r"^\\x[0-9a-fA-F]{40}$")
         is_bytea_hex = bool(id_list) and all(isinstance(x, str) and bytea_pat.fullmatch(x) for x in id_list)

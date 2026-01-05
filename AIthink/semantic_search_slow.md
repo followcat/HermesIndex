@@ -27,6 +27,22 @@ curl -sG 'http://127.0.0.1:8000/search' \
 3) If `tmdb_expand` is large: Postgres TMDB enrichment table scan/slow index; consider disabling query_expand or adding indexes.
 4) If `_debug.pg_sources[].pg_fetch_ms` is large: Postgres fetch_by_ids or joins/filters; keep `lite=true`, ensure id type matches index.
 
+## Recommended Postgres indexes (TMDB expand)
+If `tmdb_expand` dominates, `tmdb_enrichment` is likely doing a sequential scan with `ILIKE '%query%'`.
+
+For the default schema `hermes`, you can add trigram indexes (requires `pg_trgm`):
+```sql
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX IF NOT EXISTS idx_tmdb_enrichment_aka_trgm ON hermes.tmdb_enrichment USING gin (aka gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_tmdb_enrichment_keywords_trgm ON hermes.tmdb_enrichment USING gin (keywords gin_trgm_ops);
+```
+
+Or disable expansion in config for pure performance:
+```yaml
+tmdb:
+  query_expand: false
+```
+
 ## Next actions
 - Capture 3 samples with `debug=true` and compare timings.
 - If `embed` dominates, consider caching embeddings for identical queries on the API layer.

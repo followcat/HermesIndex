@@ -664,10 +664,10 @@ def search(
                     "ids": len(ids),
                     "rows": len(rows),
                     "table": (pg_cfg.get("table") or ""),
-                    "joins": len(pg_cfg.get("joins") or []),
+                    "joins": len((rows_source_cfg.get("pg") or {}).get("joins") or []),
                     "lite": bool(lite),
                     "pg_fetch_ms": round(fetch_ms, 2),
-                    "where": bool(pg_cfg.get("where")),
+                    "where": bool((rows_source_cfg.get("pg") or {}).get("where")),
                 }
             )
         if pg_cfg.get("keyword_search") and cleaned_query:
