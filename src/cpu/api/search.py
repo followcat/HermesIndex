@@ -554,6 +554,7 @@ def search(
     topk: int = Query(20, ge=1, le=100),
     exclude_nsfw: bool = Query(True),
     tmdb_only: bool = Query(False, description="only return items with tmdb_id"),
+    tmdb_expand: bool = Query(True, description="enable tmdb query expansion (aka/keywords)"),
     size_min_gb: float | None = Query(None, ge=0, description="min size in GB"),
     size_sort: str | None = Query(None, description="size sort: asc/desc"),
     page_size: int = Query(20, ge=1, le=100),
@@ -567,11 +568,17 @@ def search(
     tmdb_extra = {}
     tmdb_cfg = cfg.tmdb or {}
     tmdb_expand_ms = 0.0
-    if tmdb_cfg.get("query_expand", True) and cleaned_query:
+    if tmdb_expand and tmdb_cfg.get("query_expand", True) and cleaned_query:
         tmdb_limit = int(tmdb_cfg.get("query_expand_limit", 20))
+        tmdb_timeout_ms = int(tmdb_cfg.get("query_expand_timeout_ms", 1500))
         schema = (cfg.bitmagnet or {}).get("schema", "hermes")
         tmdb_start = time.perf_counter()
-        tmdb_extra = pg_client.search_tmdb_expansions(schema, cleaned_query, limit=tmdb_limit)
+        tmdb_extra = pg_client.search_tmdb_expansions(
+            schema,
+            cleaned_query,
+            limit=tmdb_limit,
+            timeout_ms=tmdb_timeout_ms,
+        )
         tmdb_expand_ms = (time.perf_counter() - tmdb_start) * 1000.0
     expanded_query = expand_query(cleaned_query, tmdb_extra)
     normalized_query = normalize_title_text(expanded_query)

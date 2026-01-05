@@ -24,7 +24,9 @@ curl -sG 'http://127.0.0.1:8000/search' \
 ## How to interpret
 1) If `embed` is large: bottleneck is the embedding service (GPU/CPU model). Check GPU server latency, batch size, model.
 2) If `qdrant` is large: bottleneck is Qdrant (collection size, filters, HNSW params, IO). Check Qdrant logs + CPU/IO.
-3) If `tmdb_expand` is large: Postgres TMDB enrichment table scan/slow index; consider disabling query_expand or adding indexes.
+3) If `tmdb_expand` is large: Postgres TMDB enrichment table scan/slow index; add trigram indexes or disable expansion.
+   - You can bypass it per request: add `tmdb_expand=false`.
+   - Server-side there is also a statement timeout via `tmdb.query_expand_timeout_ms` (default 1500ms).
 4) If `_debug.pg_sources[].pg_fetch_ms` is large: Postgres fetch_by_ids or joins/filters; keep `lite=true`, ensure id type matches index.
 
 ## Recommended Postgres indexes (TMDB expand)

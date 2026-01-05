@@ -402,6 +402,7 @@ class PGClient:
         schema: str,
         query: str,
         limit: int = 20,
+        timeout_ms: int | None = None,
     ) -> Dict[str, int]:
         if not query:
             return {}
@@ -416,19 +417,37 @@ class PGClient:
         pattern = f"%{query}%"
         tokens: Dict[str, int] = {}
         splitter = re.compile(r"[，,|/·\\s]+")
-        with self.connect() as conn, conn.cursor() as cur:
-            cur.execute(sql_text, (pattern, pattern, limit))
-            for row in cur.fetchall():
-                aka = row.get("aka") or ""
-                keywords = row.get("keywords") or ""
-                for item in splitter.split(str(aka)):
-                    token = item.strip()
-                    if token:
-                        tokens[token] = max(tokens.get(token, 0), 2)
-                for item in splitter.split(str(keywords)):
-                    token = item.strip()
-                    if token:
-                        tokens[token] = max(tokens.get(token, 0), 1)
+        timeout_ms_norm = None
+        if timeout_ms is not None:
+            try:
+                timeout_ms_norm = max(0, int(timeout_ms))
+            except (TypeError, ValueError):
+                timeout_ms_norm = None
+
+        try:
+            with psycopg.connect(self.dsn, row_factory=dict_row, autocommit=False) as conn, conn.cursor() as cur:
+                if timeout_ms_norm and timeout_ms_norm > 0:
+                    cur.execute("SET LOCAL statement_timeout = %s", (timeout_ms_norm,))
+                cur.execute(sql_text, (pattern, pattern, limit))
+                for row in cur.fetchall():
+                    aka = row.get("aka") or ""
+                    keywords = row.get("keywords") or ""
+                    for item in splitter.split(str(aka)):
+                        token = item.strip()
+                        if token:
+                            tokens[token] = max(tokens.get(token, 0), 2)
+                    for item in splitter.split(str(keywords)):
+                        token = item.strip()
+                        if token:
+                            tokens[token] = max(tokens.get(token, 0), 1)
+        except Exception as exc:
+            logger.warning(
+                "tmdb query_expand failed schema=%s query=%s error=%s",
+                schema,
+                (query or "")[:64],
+                exc,
+            )
+            return {}
         return tokens
 
     def fetch_latest_tmdb(self, schema: str, limit: int = 50) -> List[Dict[str, Any]]:
