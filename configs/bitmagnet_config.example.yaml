@@ -68,7 +68,7 @@ auth:
 # And set source.pg.tpdb_enrich=true + tpdb_type=jav.
 # The sync_runner will only embed code-like rows after TPDB match (tpdb_id exists).
 tpdb:
-  enabled: false
+  enabled: true
   api_token_env: "TPDB_API_TOKEN"
   endpoints:
     jav: "https://theporndb.net/graphql?type=JAV"
