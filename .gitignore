@@ -20,4 +20,6 @@ configs/bitmagnet.yaml
 docs/
 
 # AI tools workspace
-AIthink/
+AIthink/*
+!AIthink/semantic_search_slow.md
+!AIthink/benchmark_semantic_search.py
