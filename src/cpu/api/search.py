@@ -562,13 +562,17 @@ def search(
     debug: bool = Query(False, description="include internal counters for troubleshooting"),
     _: Dict[str, Any] | None = Depends(require_user),
 ) -> Dict[str, Any]:
+    total_start = time.perf_counter()
     cleaned_query, filters = extract_query_filters(q)
     tmdb_extra = {}
     tmdb_cfg = cfg.tmdb or {}
+    tmdb_expand_ms = 0.0
     if tmdb_cfg.get("query_expand", True) and cleaned_query:
         tmdb_limit = int(tmdb_cfg.get("query_expand_limit", 20))
         schema = (cfg.bitmagnet or {}).get("schema", "hermes")
+        tmdb_start = time.perf_counter()
         tmdb_extra = pg_client.search_tmdb_expansions(schema, cleaned_query, limit=tmdb_limit)
+        tmdb_expand_ms = (time.perf_counter() - tmdb_start) * 1000.0
     expanded_query = expand_query(cleaned_query, tmdb_extra)
     normalized_query = normalize_title_text(expanded_query)
     final_query = normalized_query or expanded_query
@@ -578,7 +582,9 @@ def search(
         query_prefix = search_cfg.get("query_prefix")
     if query_prefix:
         final_query = f"{query_prefix}{final_query}"
+    embed_start = time.perf_counter()
     query_vec = embed_query(final_query)
+    embed_ms = (time.perf_counter() - embed_start) * 1000.0
     genre_filters = filters.get("genres", [])
     fetch_k = min(100, max(topk, page_size))
     size_sort_norm = (size_sort or "").strip().lower()
@@ -602,12 +608,14 @@ def search(
             "subtitle_langs": filters.get("subtitle_langs"),
             "size_min": size_min_bytes,
         }
+    qdrant_start = time.perf_counter()
     results = vector_store.query(
         np.asarray([query_vec], dtype="float32"),
         topk=fetch_k,
         metadata_filter=metadata_filter,
         offset=cursor,
     )
+    qdrant_ms = (time.perf_counter() - qdrant_start) * 1000.0
     raw_count = len(results)
     filtered = _dedupe_vector_hits(results)
     filtered = [r for r in filtered if not (exclude_nsfw and r.get("nsfw"))]
@@ -752,6 +760,12 @@ def search(
             "enriched": len(enriched),
             "deduped": len(deduped),
             "vector_store_size": vs_size,
+            "timing_ms": {
+                "tmdb_expand": round(tmdb_expand_ms, 2),
+                "embed": round(embed_ms, 2),
+                "qdrant": round(qdrant_ms, 2),
+                "total": round((time.perf_counter() - total_start) * 1000.0, 2),
+            },
         }
     return response
 
