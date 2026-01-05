@@ -1,5 +1,6 @@
 import argparse
 import logging
+import re
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from typing import Any, Dict, List
@@ -316,11 +317,53 @@ def sync_source(
                     enrich_cost,
                     refresh_cost,
                 )
-        texts = []
-        for r in rows:
-            original = str(r.get("text", ""))
+        rows_to_embed = rows
+        if source.get("pg", {}).get("tpdb_enrich") and tpdb_cfg.get("enabled") and tpdb_cfg.get("auto_enrich"):
+            tpdb_type = str(source.get("pg", {}).get("tpdb_type") or "").lower()
+            if tpdb_type == "jav":
+                code_pat = re.compile(r"\b([A-Z]{2,6})[-_ ]?(\d{2,5})\b", re.IGNORECASE)
+                ready: List[Dict[str, Any]] = []
+                skipped = 0
+                for r in rows:
+                    is_code = bool(code_pat.search(str(r.get("text") or r.get("title") or "")))
+                    if is_code and not r.get("tpdb_id"):
+                        skipped += 1
+                        continue
+                    ready.append(r)
+                if skipped:
+                    logger.info(
+                        "Skip code rows without TPDB match=%d for source=%s",
+                        skipped,
+                        source["name"],
+                    )
+                rows_to_embed = ready
+                if not rows_to_embed:
+                    return {"rows": 0.0, "batch_cost": time.perf_counter() - batch_start}
+
+        def build_embed_text(row: Dict[str, Any]) -> str:
+            original = str(row.get("text", "") or "")
             cleaned = normalize_title_text(original)
-            texts.append(cleaned if cleaned else original)
+            base = cleaned if cleaned else original
+            if not row.get("tpdb_id"):
+                return base
+            extras: List[str] = []
+            for key in (
+                "tpdb_title",
+                "tpdb_original_title",
+                "tpdb_aka",
+                "tpdb_actors",
+                "tpdb_tags",
+                "tpdb_studio",
+                "tpdb_series",
+                "tpdb_site",
+                "tpdb_plot",
+            ):
+                val = row.get(key)
+                if val:
+                    extras.append(str(val))
+            return base + "\n" + "\n".join(extras) if extras else base
+
+        texts = [build_embed_text(r) for r in rows_to_embed]
         logger.info("Embedding batch size=%d for source=%s", len(texts), source["name"])
         try:
             infer_start = time.perf_counter()
@@ -328,7 +371,7 @@ def sync_source(
             infer_cost = time.perf_counter() - infer_start
         except Exception as exc:
             logger.exception("GPU inference failed: %s", exc)
-            for r in rows:
+            for r in rows_to_embed:
                 pg_client.mark_failure(source["name"], str(r["pg_id"]), str(exc))
             raise
         if embeddings.shape[1] != vector_store.dim:
@@ -337,7 +380,7 @@ def sync_source(
             )
         metas: List[Dict[str, Any]] = []
         updates: List[Dict[str, Any]] = []
-        for row, score in zip(rows, scores):
+        for row, score in zip(rows_to_embed, scores):
             nsfw_flag = score >= nsfw_threshold if source.get("tagging", {}).get("nsfw", True) else False
             tmdb_id = row.get("tmdb_id")
             has_tmdb = bool(tmdb_id)
@@ -414,7 +457,7 @@ def sync_source(
             index_size = -1
         logger.info(
             "Synced batch size=%d for source=%s, total_index_size=%d infer_cost=%.3fs add_cost=%.3fs upsert_cost=%.3fs",
-            len(rows),
+            len(rows_to_embed),
             source["name"],
             index_size,
             infer_cost,
@@ -422,15 +465,15 @@ def sync_source(
             upsert_cost,
         )
         batch_cost = time.perf_counter() - batch_start
-        throughput = len(rows) / batch_cost if batch_cost > 0 else 0.0
+        throughput = len(rows_to_embed) / batch_cost if batch_cost > 0 else 0.0
         logger.info(
             "Batch done size=%d source=%s total_cost=%.3fs throughput=%.2f rows/s",
-            len(rows),
+            len(rows_to_embed),
             source["name"],
             batch_cost,
             throughput,
         )
-        return {"rows": float(len(rows)), "batch_cost": batch_cost}
+        return {"rows": float(len(rows_to_embed)), "batch_cost": batch_cost}
 
     def drain_completed(block: bool) -> None:
         nonlocal total_rows, total_batches, total_time
