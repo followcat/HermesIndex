@@ -503,9 +503,9 @@ def sync_source(
             source["name"],
             total_batches,
             total_rows,
-        total_time,
-        avg_throughput,
-    )
+            total_time,
+            avg_throughput,
+        )
 
 
 def run_sync(config_path: str, target_source: str | None = None) -> None:
