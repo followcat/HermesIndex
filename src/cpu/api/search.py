@@ -683,34 +683,8 @@ def search(
                     "where": bool((rows_source_cfg.get("pg") or {}).get("where")),
                 }
             )
-        if pg_cfg.get("keyword_search") and cleaned_query:
-            # Keyword scan should respect pg.where (if configured), plus runtime filters.
-            keyword_where: List[str] = []
-            base_where = pg_cfg.get("where")
-            if base_where:
-                keyword_where.append(str(base_where))
-            if tmdb_only and tmdb_field in fields:
-                keyword_where.append(f"{tmdb_field} IS NOT NULL")
-            if size_min_bytes and size_field and size_field in fields:
-                keyword_where.append(f"t.{size_field} >= {size_min_bytes}")
-            merged_keyword_where = _merge_where(keyword_where)
-            keyword_source_cfg = {
-                **source_cfg,
-                "pg": {
-                    **pg_cfg,
-                    "where": merged_keyword_where or pg_cfg.get("where"),
-                    "joins": [],
-                },
-            }
-            if not tmdb_only or tmdb_field in fields:
-                keyword_hits = pg_client.search_by_keyword(keyword_source_cfg, cleaned_query, limit=page_size * 3)
-            else:
-                keyword_hits = []
-            for hit in keyword_hits:
-                rows.setdefault(
-                    str(hit["pg_id"]),
-                    {source_cfg["pg"]["text_field"]: hit.get("title", "")},
-                )
+        # Skip keyword_search in semantic search path - we already have vector hits.
+        # keyword_search is mainly useful for /search_keyword endpoint.
         for r in filtered:
             if r["source"] != source_name:
                 continue
