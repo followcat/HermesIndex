@@ -24,3 +24,4 @@ AIthink/*
 !AIthink/semantic_search_slow.md
 !AIthink/benchmark_semantic_search.py
 !AIthink/semantic_search_analysis_20260106.md
+!AIthink/check_vector_sources.py
