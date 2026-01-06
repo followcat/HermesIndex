@@ -175,6 +175,38 @@ python3 AIthink/benchmark_semantic_search.py \
 
 **修复**：在 `/search`（语义搜索）路径下跳过 `keyword_search` 调用。语义搜索已经有向量命中，不需要再做关键词补充。`keyword_search` 主要用于 `/search_keyword` 端点。
 
+## 根因分析 (搜索结果几乎全是 TMDB 数据)
+
+用户反馈：语义搜索 "jojo奇妙冒险" 返回的几乎全是 TMDB content，没有普通种子。
+
+**原因**：JAV gating 正则太宽泛，误判了很多普通种子为"番号"。
+
+原正则：`\b([A-Z]{2,6})[-_ ]?(\d{2,5})\b`
+
+这会误匹配：
+- `HD 720`, `MP4 1080` (视频格式)
+- `S01 E05` (剧集编号)
+- `DTS 5.1` (音频格式)
+- `X264`, `H265` (编码器)
+
+导致这些普通种子因为没有 `tpdb_id` 而被跳过 embedding。
+
+**修复**：添加 false positive 前缀黑名单：
+```python
+false_positive_prefixes = {
+    "HD", "SD", "MP", "AVI", "MKV", "WMV", "MOV", "FLV", "TS", "VOB",
+    "AAC", "AC", "DTS", "FLAC", "WAV", "OGG", "WMA",
+    "S", "E", "EP", "CH", "PT", "CD", "DVD", "BD", "BR",
+    "GB", "MB", "KB", "TB", "FPS", "HZ", "KHZ", "BIT", "KBPS",
+    "X", "H", "AVC", "HEVC", "MPEG", "XVID", "DIVX",
+    "P", "I", "K", "V", "R", "D", "EN", "JP", "CN", "KR", "TW", "HK",
+}
+```
+
+只有当正则匹配的前缀**不在黑名单**中时，才认为是真正的番号。
+
+**注意**：修复后需要重新同步 `bitmagnet_torrents` 和 `bitmagnet_torrent_files` 才能让普通种子入库。
+
 ## 下一步
 
 1. 线上部署最新代码
