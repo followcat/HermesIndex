@@ -321,11 +321,30 @@ def sync_source(
         if source.get("pg", {}).get("tpdb_enrich") and tpdb_cfg.get("enabled") and tpdb_cfg.get("auto_enrich"):
             tpdb_type = str(source.get("pg", {}).get("tpdb_type") or "").lower()
             if tpdb_type == "jav":
+                # More precise JAV code pattern:
+                # - Must be 2-6 uppercase letters followed by hyphen/underscore/space and 2-5 digits
+                # - Exclude common false positives like "HD 720", "MP4 1080", "S01 E05", "DTS 5.1"
+                # - Common JAV prefixes: ABP, SSIS, IPX, MIDV, STAR, CAWD, FSDSS, etc.
+                # - The pattern requires the letter part to NOT be common video/audio terms
+                false_positive_prefixes = {
+                    "HD", "SD", "MP", "AVI", "MKV", "WMV", "MOV", "FLV", "TS", "VOB",
+                    "AAC", "AC", "DTS", "FLAC", "WAV", "OGG", "WMA",
+                    "S", "E", "EP", "CH", "PT", "CD", "DVD", "BD", "BR",
+                    "GB", "MB", "KB", "TB", "FPS", "HZ", "KHZ", "BIT", "KBPS",
+                    "X", "H", "AVC", "HEVC", "MPEG", "XVID", "DIVX",
+                    "P", "I", "K", "V", "R", "D", "EN", "JP", "CN", "KR", "TW", "HK",
+                }
                 code_pat = re.compile(r"\b([A-Z]{2,6})[-_ ]?(\d{2,5})\b", re.IGNORECASE)
                 ready: List[Dict[str, Any]] = []
                 skipped = 0
                 for r in rows:
-                    is_code = bool(code_pat.search(str(r.get("text") or r.get("title") or "")))
+                    text = str(r.get("text") or r.get("title") or "")
+                    match = code_pat.search(text)
+                    is_code = False
+                    if match:
+                        prefix = match.group(1).upper()
+                        if prefix not in false_positive_prefixes:
+                            is_code = True
                     if is_code and not r.get("tpdb_id"):
                         skipped += 1
                         continue
