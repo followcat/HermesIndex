@@ -406,12 +406,31 @@ class PGClient:
     ) -> Dict[str, int]:
         if not query:
             return {}
+        # Search both:
+        # 1. aka/keywords containing query (existing logic)
+        # 2. content.title matching query, then fetch aka from enrichment (new: cross-language expansion)
         sql_text = sql.SQL(
             """
-            SELECT aka, keywords
-            FROM {schema}.tmdb_enrichment
-            WHERE aka ILIKE %s OR keywords ILIKE %s
-            LIMIT %s
+            WITH matched AS (
+                -- Match by aka/keywords
+                SELECT te.aka, te.keywords
+                FROM {schema}.tmdb_enrichment te
+                WHERE te.aka ILIKE %s OR te.keywords ILIKE %s
+                LIMIT %s
+            ),
+            title_matched AS (
+                -- Match by content title, get corresponding aka for cross-language expansion
+                SELECT te.aka, te.keywords
+                FROM public.content c
+                JOIN {schema}.tmdb_enrichment te
+                    ON te.content_type = c.type AND te.tmdb_id = c.id
+                WHERE c.source = 'tmdb'
+                    AND (c.title ILIKE %s OR c.original_title ILIKE %s)
+                LIMIT %s
+            )
+            SELECT aka, keywords FROM matched
+            UNION ALL
+            SELECT aka, keywords FROM title_matched
             """
         ).format(schema=sql.Identifier(schema))
         pattern = f"%{query}%"
@@ -428,7 +447,7 @@ class PGClient:
             with psycopg.connect(self.dsn, row_factory=dict_row, autocommit=False) as conn, conn.cursor() as cur:
                 if timeout_ms_norm and timeout_ms_norm > 0:
                     cur.execute(f"SET LOCAL statement_timeout = {int(timeout_ms_norm)}")
-                cur.execute(sql_text, (pattern, pattern, limit))
+                cur.execute(sql_text, (pattern, pattern, limit, pattern, pattern, limit))
                 for row in cur.fetchall():
                     aka = row.get("aka") or ""
                     keywords = row.get("keywords") or ""
