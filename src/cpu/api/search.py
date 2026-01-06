@@ -641,6 +641,7 @@ def search(
             continue
         ids_by_source.setdefault(source, []).append(str(pg_id))
     enriched: List[SearchResult] = []
+    pg_loop_start = time.perf_counter()
     for source_name, ids in ids_by_source.items():
         source_cfg = source_map.get(source_name)
         if not source_cfg:
@@ -734,6 +735,7 @@ def search(
                 )
             )
     enriched.sort(key=lambda x: x.score, reverse=True)
+    pg_loop_ms = (time.perf_counter() - pg_loop_start) * 1000.0
     deduped = _dedupe_search_results(enriched)
     if size_sort_norm in {"asc", "desc"}:
         reverse = size_sort_norm == "desc"
@@ -776,6 +778,7 @@ def search(
                 "tmdb_expand": round(tmdb_expand_ms, 2),
                 "embed": round(embed_ms, 2),
                 "qdrant": round(qdrant_ms, 2),
+                "pg_loop": round(pg_loop_ms, 2),
                 "total": round((time.perf_counter() - total_start) * 1000.0, 2),
             },
         }
