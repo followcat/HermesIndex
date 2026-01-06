@@ -427,7 +427,7 @@ class PGClient:
         try:
             with psycopg.connect(self.dsn, row_factory=dict_row, autocommit=False) as conn, conn.cursor() as cur:
                 if timeout_ms_norm and timeout_ms_norm > 0:
-                    cur.execute("SET LOCAL statement_timeout = %s", (timeout_ms_norm,))
+                    cur.execute(f"SET LOCAL statement_timeout = {int(timeout_ms_norm)}")
                 cur.execute(sql_text, (pattern, pattern, limit))
                 for row in cur.fetchall():
                     aka = row.get("aka") or ""
