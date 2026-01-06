@@ -163,6 +163,17 @@ python3 AIthink/benchmark_semantic_search.py \
 2. `Add tmdb_expand switch and timeout` - 添加 tmdb_expand 参数和超时
 3. `Make GPU/Qdrant timeouts configurable` - 让 GPU/Qdrant 超时可配置
 4. `Add pg_loop timing to debug output` - 添加 PG 回查循环计时
+5. **`Skip keyword_search in semantic search path`** - 修复 136s 的 pg_loop 慢问题
+
+## 根因分析 (136s pg_loop)
+
+通过 `timing_ms.pg_loop` 定位到问题：
+- `pg_sources` 显示两个 source 的 `pg_fetch_ms` 各 ~280ms
+- 但 `pg_loop` 总计 136s
+
+**原因**：source 配置了 `keyword_search: true`，导致语义搜索路径也会调用 `search_by_keyword()`，对 `hermes.content_view` 执行 `ILIKE '%jojo奇妙冒险%'` 全表扫描。
+
+**修复**：在 `/search`（语义搜索）路径下跳过 `keyword_search` 调用。语义搜索已经有向量命中，不需要再做关键词补充。`keyword_search` 主要用于 `/search_keyword` 端点。
 
 ## 下一步
 
