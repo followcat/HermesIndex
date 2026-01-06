@@ -406,13 +406,29 @@ class PGClient:
     ) -> Dict[str, int]:
         if not query:
             return {}
+        
+        # Build flexible patterns for matching
+        # For mixed language like "jojo奇妙冒险", split at language boundaries
+        # Pattern 1: exact substring match
+        # Pattern 2: split into ascii and non-ascii parts, match both
+        pattern = f"%{query}%"
+        
+        # Extract ascii and non-ascii parts for flexible matching
+        ascii_parts = re.findall(r'[a-zA-Z0-9]+', query)
+        non_ascii_parts = re.findall(r'[^\x00-\x7F]+', query)
+        
+        # Build token patterns: first significant ascii and first significant non-ascii
+        token1_pattern = f"%{ascii_parts[0]}%" if ascii_parts else pattern
+        token2_pattern = f"%{non_ascii_parts[0]}%" if non_ascii_parts else pattern
+        
         # Search both:
         # 1. aka/keywords containing query (existing logic)
         # 2. content.title matching query, then fetch aka from enrichment (new: cross-language expansion)
+        # 3. Also search aka for individual tokens to catch "JOJO的奇妙冒险" when searching "jojo奇妙冒险"
         sql_text = sql.SQL(
             """
             WITH matched AS (
-                -- Match by aka/keywords
+                -- Match by aka/keywords (exact substring)
                 SELECT te.aka, te.keywords
                 FROM {schema}.tmdb_enrichment te
                 WHERE te.aka ILIKE %s OR te.keywords ILIKE %s
@@ -427,13 +443,31 @@ class PGClient:
                 WHERE c.source = 'tmdb'
                     AND (c.title ILIKE %s OR c.original_title ILIKE %s)
                 LIMIT %s
+            ),
+            aka_token_matched AS (
+                -- Match aka containing all query tokens (flexible matching)
+                SELECT te.aka, te.keywords
+                FROM {schema}.tmdb_enrichment te
+                WHERE te.aka ILIKE %s AND te.aka ILIKE %s
+                LIMIT %s
             )
             SELECT aka, keywords FROM matched
             UNION ALL
             SELECT aka, keywords FROM title_matched
+            UNION ALL
+            SELECT aka, keywords FROM aka_token_matched
             """
         ).format(schema=sql.Identifier(schema))
-        pattern = f"%{query}%"
+        
+        # Build token patterns for flexible aka matching
+        # Use first and last significant tokens (or first two if query is short)
+        if len(query_tokens) >= 2:
+            token1_pattern = f"%{query_tokens[0]}%"
+            token2_pattern = f"%{query_tokens[-1]}%"
+        else:
+            token1_pattern = pattern
+            token2_pattern = pattern
+        
         tokens: Dict[str, int] = {}
         splitter = re.compile(r"[，,|/·\\s]+")
         timeout_ms_norm = None
@@ -447,7 +481,11 @@ class PGClient:
             with psycopg.connect(self.dsn, row_factory=dict_row, autocommit=False) as conn, conn.cursor() as cur:
                 if timeout_ms_norm and timeout_ms_norm > 0:
                     cur.execute(f"SET LOCAL statement_timeout = {int(timeout_ms_norm)}")
-                cur.execute(sql_text, (pattern, pattern, limit, pattern, pattern, limit))
+                cur.execute(sql_text, (
+                    pattern, pattern, limit,  # matched
+                    pattern, pattern, limit,  # title_matched
+                    token1_pattern, token2_pattern, limit,  # aka_token_matched
+                ))
                 for row in cur.fetchall():
                     aka = row.get("aka") or ""
                     keywords = row.get("keywords") or ""
