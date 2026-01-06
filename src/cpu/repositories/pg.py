@@ -459,15 +459,6 @@ class PGClient:
             """
         ).format(schema=sql.Identifier(schema))
         
-        # Build token patterns for flexible aka matching
-        # Use first and last significant tokens (or first two if query is short)
-        if len(query_tokens) >= 2:
-            token1_pattern = f"%{query_tokens[0]}%"
-            token2_pattern = f"%{query_tokens[-1]}%"
-        else:
-            token1_pattern = pattern
-            token2_pattern = pattern
-        
         tokens: Dict[str, int] = {}
         splitter = re.compile(r"[，,|/·\\s]+")
         timeout_ms_norm = None
