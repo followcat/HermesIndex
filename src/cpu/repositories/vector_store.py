@@ -162,6 +162,8 @@ class QdrantVectorStore(BaseVectorStore):
         dim: int,
         metric: str = "cosine",
         api_key: str | None = None,
+        timeout: float = 60.0,
+        http_timeout: float = 30.0,
     ) -> None:
         try:
             from qdrant_client import QdrantClient
@@ -176,9 +178,17 @@ class QdrantVectorStore(BaseVectorStore):
         distance = Distance.COSINE if metric == "cosine" else Distance.DOT
         # qdrant-client defaults to probing server version via GET / (can be noisy and may fail transiently),
         # so disable compatibility checks and rely on request retries/fallback instead.
-        self.client = QdrantClient(url=url, api_key=api_key, timeout=60, check_compatibility=False)
+        try:
+            timeout_norm = float(timeout)
+        except (TypeError, ValueError):
+            timeout_norm = 60.0
+        try:
+            http_timeout_norm = float(http_timeout)
+        except (TypeError, ValueError):
+            http_timeout_norm = 30.0
+        self.client = QdrantClient(url=url, api_key=api_key, timeout=timeout_norm, check_compatibility=False)
         self._api_key = api_key
-        self._http_timeout = 30
+        self._http_timeout = http_timeout_norm
         self._distance_name = "Cosine" if metric == "cosine" else "Dot"
         vectors_config = VectorParams(size=dim, distance=distance)
         init_error: Exception | None = None
@@ -536,6 +546,8 @@ def create_vector_store(cfg: Dict[str, Any]) -> BaseVectorStore:
             dim=int(cfg.get("dim", 768)),
             metric=cfg.get("metric", "cosine"),
             api_key=cfg.get("api_key"),
+            timeout=float(cfg.get("timeout_seconds", 60.0)),
+            http_timeout=float(cfg.get("http_timeout_seconds", 30.0)),
         )
     if store_type == "milvus":
         return MilvusVectorStore(

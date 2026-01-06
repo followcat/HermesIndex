@@ -556,7 +556,12 @@ def run_sync(config_path: str, target_source: str | None = None) -> None:
     pg_client = PGClient(cfg.postgres["dsn"])
     pg_client.ensure_tables()
     vector_store = create_vector_store(cfg.vector_store)
-    gpu_client = GPUClient(cfg.gpu_endpoint)
+    search_cfg = getattr(cfg, "search", {}) if hasattr(cfg, "search") else {}
+    try:
+        gpu_timeout = float((search_cfg or {}).get("gpu_timeout_seconds") or 60.0)
+    except (TypeError, ValueError):
+        gpu_timeout = 60.0
+    gpu_client = GPUClient(cfg.gpu_endpoint, timeout=gpu_timeout)
     tmdb_schema = (cfg.bitmagnet or {}).get("schema", "hermes")
     tpdb_schema = (cfg.bitmagnet or {}).get("schema", "hermes")
     sources = [s for s in cfg.sources if (not target_source or s["name"] == target_source)]

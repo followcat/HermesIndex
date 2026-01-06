@@ -29,7 +29,12 @@ logger = logging.getLogger(__name__)
 cfg = load_config(CONFIG_PATH)
 pg_client = PGClient(cfg.postgres["dsn"])
 vector_store = create_vector_store(cfg.vector_store)
-gpu_client = GPUClient(cfg.gpu_endpoint) if cfg.gpu_endpoint else None
+_search_cfg = getattr(cfg, "search", {}) if hasattr(cfg, "search") else {}
+try:
+    _gpu_timeout = float(((_search_cfg or {}).get("gpu_timeout_seconds")) or 60.0)
+except (TypeError, ValueError):
+    _gpu_timeout = 60.0
+gpu_client = GPUClient(cfg.gpu_endpoint, timeout=_gpu_timeout) if cfg.gpu_endpoint else None
 local_embedder = None
 if cfg.local_embedder.get("enabled"):
     local_embedder = LocalEmbedder(cfg.local_embedder.get("model_name", "BAAI/bge-m3"))
