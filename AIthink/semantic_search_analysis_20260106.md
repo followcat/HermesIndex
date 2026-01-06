@@ -179,7 +179,7 @@ python3 AIthink/benchmark_semantic_search.py \
 
 用户反馈：语义搜索 "jojo奇妙冒险" 返回的几乎全是 TMDB content，没有普通种子。
 
-**原因**：JAV gating 正则太宽泛，误判了很多普通种子为"番号"。
+### 原因 1：JAV gating 正则太宽泛（已修复）
 
 原正则：`\b([A-Z]{2,6})[-_ ]?(\d{2,5})\b`
 
@@ -191,19 +191,21 @@ python3 AIthink/benchmark_semantic_search.py \
 
 导致这些普通种子因为没有 `tpdb_id` 而被跳过 embedding。
 
-**修复**：添加 false positive 前缀黑名单：
-```python
-false_positive_prefixes = {
-    "HD", "SD", "MP", "AVI", "MKV", "WMV", "MOV", "FLV", "TS", "VOB",
-    "AAC", "AC", "DTS", "FLAC", "WAV", "OGG", "WMA",
-    "S", "E", "EP", "CH", "PT", "CD", "DVD", "BD", "BR",
-    "GB", "MB", "KB", "TB", "FPS", "HZ", "KHZ", "BIT", "KBPS",
-    "X", "H", "AVC", "HEVC", "MPEG", "XVID", "DIVX",
-    "P", "I", "K", "V", "R", "D", "EN", "JP", "CN", "KR", "TW", "HK",
-}
-```
+**修复**：添加 false positive 前缀黑名单。
 
-只有当正则匹配的前缀**不在黑名单**中时，才认为是真正的番号。
+### 原因 2：跨语言语义匹配局限性（已改进）
+
+测试发现：
+- 中文查询 "jojo奇妙冒险" → 只返回 TMDB content（中文元数据）
+- 英文查询 "JoJo Bizarre Adventure" → 返回 bitmagnet_torrents（英文文件名）
+
+BGE-M3 虽然是多语言模型，但中文查询与英文 torrent 名称的向量距离仍然较远。
+
+**改进**：增强 `tmdb_expand` 查询扩展逻辑：
+- 原逻辑：只在 aka/keywords 中搜索查询词
+- 新逻辑：**也搜索 content.title**，找到匹配的中文标题后，取其英文 aka 来扩展查询
+
+这样 "jojo奇妙冒险" 会先匹配到 TMDB content 的中文标题，然后取其 aka（如 "JoJo's Bizarre Adventure"）来扩展，从而也能匹配英文 torrent。
 
 **注意**：修复后需要重新同步 `bitmagnet_torrents` 和 `bitmagnet_torrent_files` 才能让普通种子入库。
 
