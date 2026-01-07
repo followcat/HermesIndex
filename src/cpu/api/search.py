@@ -712,11 +712,16 @@ def search(
         if query_prefix:
             english_final = f"{query_prefix}{english_final}"
         logger.info(f"English secondary query: '{english_final}'")
-        # For English secondary search, only apply size filter (not genre/tmdb filters)
-        # because raw torrents don't have TMDB enrichment metadata
+        # For English secondary search, apply minimal filters:
+        # - Always respect tmdb_only if user explicitly requested it
+        # - Always respect size_min if set
+        # - Skip genre/audio/subtitle filters (raw torrents don't have this metadata)
         english_metadata_filter = None
-        if size_min_bytes:
-            english_metadata_filter = {"size_min": size_min_bytes}
+        if tmdb_only or size_min_bytes:
+            english_metadata_filter = {
+                "has_tmdb": tmdb_only,
+                "size_min": size_min_bytes,
+            }
         english_vec = embed_query(english_final)
         english_results = vector_store.query(
             np.asarray([english_vec], dtype="float32"),
