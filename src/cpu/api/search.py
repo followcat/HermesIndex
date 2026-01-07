@@ -402,6 +402,60 @@ def _meta_size(meta: Dict[str, Any]) -> float | None:
     return None
 
 
+def extract_english_expansion(extra_terms: Dict[str, int] | None, max_terms: int = 1) -> str | None:
+    """Extract top English-only terms from TMDB expansion for cross-language search.
+    
+    Returns a separate English query string if there are meaningful English terms,
+    otherwise None. This allows doing a secondary search with pure English to find
+    torrents that wouldn't match a mixed Chinese+English query.
+    """
+    if not extra_terms:
+        return None
+    
+    # Strategy: find the best English title
+    # Look for terms that look like proper titles (capitalized, multi-word)
+    # For terms with colons like "Title : Subtitle", extract main title
+    
+    candidates = []
+    for term, weight in extra_terms.items():
+        if not term.isascii() or len(term) < 5:  # Min 5 chars for a title
+            continue
+        has_space = " " in term
+        if not has_space:
+            continue
+        
+        # Extract main title if colon present
+        if ":" in term:
+            main_title = term.split(":")[0].strip()
+            if main_title and len(main_title) >= 5:
+                candidates.append((main_title, weight, len(main_title)))
+        else:
+            # Check if it looks like a title (first word capitalized)
+            first_word = term.split()[0] if term.split() else ""
+            if first_word and first_word[0].isupper():
+                candidates.append((term, weight, len(term)))
+    
+    if not candidates:
+        return None
+    
+    # Sort by length (longer = more specific title), then by weight
+    candidates.sort(key=lambda x: (-x[2], -x[1]))
+    
+    # Deduplicate
+    seen = set()
+    english_terms = []
+    for term, weight, length in candidates:
+        if term not in seen:
+            english_terms.append(term)
+            seen.add(term)
+            if len(english_terms) >= max_terms:
+                break
+    
+    if not english_terms:
+        return None
+    return " ".join(english_terms)
+
+
 def expand_query(query: str, extra_terms: Dict[str, int] | None = None) -> str:
     if not query:
         return query
@@ -438,10 +492,25 @@ def expand_query(query: str, extra_terms: Dict[str, int] | None = None) -> str:
         if key in query:
             tokens.extend(extra)
     if extra_terms:
-        for term, weight in extra_terms.items():
-            count = max(1, min(int(weight), 3))
-            for _ in range(count):
-                tokens.append(term)
+        # Limit expansion tokens to avoid overly long queries that embed poorly.
+        # Prioritize: (1) English-only terms (cross-language), (2) higher weight.
+        max_extra = 8  # max extra tokens from TMDB expansion
+        sorted_terms = sorted(
+            extra_terms.items(),
+            key=lambda x: (
+                0 if x[0].isascii() else 1,  # English first
+                -x[1],  # higher weight first
+            ),
+        )
+        added = 0
+        for term, weight in sorted_terms:
+            if added >= max_extra:
+                break
+            # Skip very short terms (likely noise) and the original query itself
+            if len(term) < 2 or term.lower() == query.lower():
+                continue
+            tokens.append(term)
+            added += 1
     seen = set()
     deduped = []
     for token in tokens:
@@ -573,6 +642,7 @@ def search(
     tmdb_extra = {}
     tmdb_cfg = cfg.tmdb or {}
     tmdb_expand_ms = 0.0
+    english_expansion = None
     if tmdb_expand and tmdb_cfg.get("query_expand", True) and cleaned_query:
         tmdb_limit = int(tmdb_cfg.get("query_expand_limit", 20))
         tmdb_timeout_ms = int(tmdb_cfg.get("query_expand_timeout_ms", 1500))
@@ -585,6 +655,8 @@ def search(
             timeout_ms=tmdb_timeout_ms,
         )
         tmdb_expand_ms = (time.perf_counter() - tmdb_start) * 1000.0
+        # Extract English-only terms for cross-language search
+        english_expansion = extract_english_expansion(tmdb_extra, max_terms=3)
     expanded_query = expand_query(cleaned_query, tmdb_extra)
     normalized_query = normalize_title_text(expanded_query)
     final_query = normalized_query or expanded_query
@@ -627,7 +699,46 @@ def search(
         metadata_filter=metadata_filter,
         offset=cursor,
     )
-    qdrant_ms = (time.perf_counter() - qdrant_start) * 1000.0
+    
+    # Cross-language search: if original query is non-ASCII and we have English expansion,
+    # do a secondary search with pure English to find torrents (which have English names).
+    english_search_ms = 0.0
+    if english_expansion and not cleaned_query.isascii():
+        english_start = time.perf_counter()
+        # Apply same transformations as primary query for consistent embeddings
+        english_expanded = expand_query(english_expansion, None)  # No TMDB expansion for secondary
+        english_normalized = normalize_title_text(english_expanded)
+        english_final = english_normalized or english_expanded
+        if query_prefix:
+            english_final = f"{query_prefix}{english_final}"
+        logger.info(f"English secondary query: '{english_final}'")
+        # For English secondary search, only apply size filter (not genre/tmdb filters)
+        # because raw torrents don't have TMDB enrichment metadata
+        english_metadata_filter = None
+        if size_min_bytes:
+            english_metadata_filter = {"size_min": size_min_bytes}
+        english_vec = embed_query(english_final)
+        english_results = vector_store.query(
+            np.asarray([english_vec], dtype="float32"),
+            topk=fetch_k,
+            metadata_filter=english_metadata_filter,
+            offset=0,  # Start from 0 for the English search
+        )
+        # Merge results: add English search results that aren't already in primary results
+        seen_keys = {(r.get("source"), r.get("pg_id")) for r in results}
+        added_count = 0
+        for r in english_results:
+            key = (r.get("source"), r.get("pg_id"))
+            if key not in seen_keys:
+                results.append(r)
+                seen_keys.add(key)
+                added_count += 1
+        # Re-sort merged results by score (descending) and take top fetch_k
+        results.sort(key=lambda x: float(x.get("score", 0)), reverse=True)
+        results = results[:fetch_k]
+        english_search_ms = (time.perf_counter() - english_start) * 1000.0
+    
+    qdrant_ms = (time.perf_counter() - qdrant_start) * 1000.0 - english_search_ms
     raw_count = len(results)
     filtered = _dedupe_vector_hits(results)
     filtered = [r for r in filtered if not (exclude_nsfw and r.get("nsfw"))]
@@ -748,10 +859,12 @@ def search(
             "enriched": len(enriched),
             "deduped": len(deduped),
             "vector_store_size": vs_size,
+            "english_expansion": english_expansion,
             "timing_ms": {
                 "tmdb_expand": round(tmdb_expand_ms, 2),
                 "embed": round(embed_ms, 2),
                 "qdrant": round(qdrant_ms, 2),
+                "english_search": round(english_search_ms, 2),
                 "pg_loop": round(pg_loop_ms, 2),
                 "total": round((time.perf_counter() - total_start) * 1000.0, 2),
             },

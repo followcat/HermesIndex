@@ -460,7 +460,10 @@ class PGClient:
         ).format(schema=sql.Identifier(schema))
         
         tokens: Dict[str, int] = {}
-        splitter = re.compile(r"[，,|/·\\s]+")
+        # Split aka/keywords by common separators, but preserve complete titles.
+        # Separators: Chinese comma, regular comma, pipe, slash
+        # Do NOT split on spaces (would break "JoJo's Bizarre Adventure")
+        splitter = re.compile(r"[，,|/·]+")
         timeout_ms_norm = None
         if timeout_ms is not None:
             try:
